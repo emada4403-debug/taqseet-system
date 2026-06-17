@@ -1,0 +1,680 @@
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { supabase } from '@/lib/supabase'
+import { isLate } from '@/lib/utils'
+import { parseISO } from 'date-fns'
+
+// ===================================================
+// DASHBOARD
+// ===================================================
+export const useDashboard = () => {
+  return useQuery({
+    queryKey: ['dashboard'],
+    queryFn: async () => {
+      const today = new Date().toISOString().split('T')[0]
+      const weekLater = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+
+      // Get all installments with contract info
+      const { data: installments, error } = await supabase
+        .from('installments')
+        .select(`
+          *,
+          contracts (
+            id, type, item_description, status,
+            clients (id, name, phone),
+            suppliers (id, name, phone)
+          )
+        `)
+        .neq('status', 'paid')
+        .order('due_date', { ascending: true })
+
+      if (error) throw error
+
+      // Auto-mark late installments
+      const lateInstallments = installments.filter(i =>
+        i.status === 'pending' && isLate(i.due_date)
+      )
+
+      // Update late ones in background
+      if (lateInstallments.length > 0) {
+        await supabase
+          .from('installments')
+          .update({ status: 'late' })
+          .in('id', lateInstallments.map(i => i.id))
+      }
+
+      const allInstallments = installments.map(i => ({
+        ...i,
+        status: (i.status === 'pending' && isLate(i.due_date)) ? 'late' : i.status
+      }))
+
+      // Summary calculations
+      const receivables = allInstallments.filter(i => i.contracts?.type === 'RECEIVABLE')
+      const payables = allInstallments.filter(i => i.contracts?.type === 'PAYABLE')
+
+      const totalReceivables = receivables.reduce((sum, i) => sum + parseFloat(i.remaining_amount || 0), 0)
+      const totalPayables = payables.reduce((sum, i) => sum + parseFloat(i.remaining_amount || 0), 0)
+
+      const todayInstallments = allInstallments.filter(i => i.due_date === today)
+      const weekInstallments = allInstallments.filter(i =>
+        i.due_date > today && i.due_date <= weekLater
+      )
+      const lateCount = allInstallments.filter(i => i.status === 'late').length
+
+      return {
+        totalReceivables,
+        totalPayables,
+        netCash: totalReceivables - totalPayables,
+        todayInstallments,
+        weekInstallments,
+        lateCount,
+        allInstallments,
+      }
+    },
+    staleTime: 1000 * 60 * 5, // 5 minutes
+  })
+}
+
+// ===================================================
+// CLIENTS
+// ===================================================
+export const useClients = () => {
+  return useQuery({
+    queryKey: ['clients'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('clients')
+        .select(`
+          *,
+          contracts (
+            id, status, type, total_price, down_payment, installment_count, installment_amount,
+            item_description, start_date,
+            installments (id, status, remaining_amount, due_date, amount)
+          )
+        `)
+        .eq('is_active', true)
+        .order('name')
+
+      if (error) throw error
+      return data
+    },
+  })
+}
+
+export const useClient = (id) => {
+  return useQuery({
+    queryKey: ['clients', id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('clients')
+        .select(`
+          *,
+          contracts (
+            *,
+            installments (
+              *,
+              payments (*)
+            )
+          )
+        `)
+        .eq('id', id)
+        .single()
+
+      if (error) throw error
+      return data
+    },
+    enabled: !!id,
+  })
+}
+
+export const useCreateClient = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (data) => {
+      const { data: { user } } = await supabase.auth.getUser()
+      const { data: result, error } = await supabase
+        .from('clients')
+        .insert({ ...data, user_id: user.id })
+        .select()
+        .single()
+      if (error) throw error
+      return result
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['clients'] })
+    },
+  })
+}
+
+export const useUpdateClient = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, ...data }) => {
+      const { data: result, error } = await supabase
+        .from('clients')
+        .update(data)
+        .eq('id', id)
+        .select()
+        .single()
+      if (error) throw error
+      return result
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['clients'] })
+      queryClient.invalidateQueries({ queryKey: ['clients', vars.id] })
+    },
+  })
+}
+
+export const useDeleteClient = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (id) => {
+      const { error } = await supabase
+        .from('clients')
+        .update({ is_active: false })
+        .eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['clients'] })
+    },
+  })
+}
+
+// ===================================================
+// SUPPLIERS
+// ===================================================
+export const useSuppliers = () => {
+  return useQuery({
+    queryKey: ['suppliers'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('suppliers')
+        .select(`
+          *,
+          contracts (
+            id, status, type, total_price, installment_amount,
+            item_description, start_date,
+            installments (id, status, remaining_amount, due_date, amount)
+          )
+        `)
+        .eq('is_active', true)
+        .order('name')
+
+      if (error) throw error
+      return data
+    },
+  })
+}
+
+export const useSupplier = (id) => {
+  return useQuery({
+    queryKey: ['suppliers', id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('suppliers')
+        .select(`
+          *,
+          contracts (
+            *,
+            installments (
+              *,
+              payments (*)
+            )
+          )
+        `)
+        .eq('id', id)
+        .single()
+
+      if (error) throw error
+      return data
+    },
+    enabled: !!id,
+  })
+}
+
+export const useCreateSupplier = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (data) => {
+      const { data: { user } } = await supabase.auth.getUser()
+      const { data: result, error } = await supabase
+        .from('suppliers')
+        .insert({ ...data, user_id: user.id })
+        .select()
+        .single()
+      if (error) throw error
+      return result
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['suppliers'] })
+    },
+  })
+}
+
+export const useUpdateSupplier = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, ...data }) => {
+      const { data: result, error } = await supabase
+        .from('suppliers')
+        .update(data)
+        .eq('id', id)
+        .select()
+        .single()
+      if (error) throw error
+      return result
+    },
+    onSuccess: (_, vars) => {
+      queryClient.invalidateQueries({ queryKey: ['suppliers'] })
+      queryClient.invalidateQueries({ queryKey: ['suppliers', vars.id] })
+    },
+  })
+}
+
+// ===================================================
+// CONTRACTS
+// ===================================================
+export const useContracts = (filters = {}) => {
+  return useQuery({
+    queryKey: ['contracts', filters],
+    queryFn: async () => {
+      let query = supabase
+        .from('contracts')
+        .select(`
+          *,
+          clients (id, name, phone),
+          suppliers (id, name, phone),
+          installments (id, status, remaining_amount, due_date, amount)
+        `)
+        .order('created_at', { ascending: false })
+
+      if (filters.type) query = query.eq('type', filters.type)
+      if (filters.status) query = query.eq('status', filters.status)
+      if (filters.client_id) query = query.eq('client_id', filters.client_id)
+      if (filters.supplier_id) query = query.eq('supplier_id', filters.supplier_id)
+
+      const { data, error } = await query
+      if (error) throw error
+      return data
+    },
+  })
+}
+
+export const useContract = (id) => {
+  return useQuery({
+    queryKey: ['contracts', id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('contracts')
+        .select(`
+          *,
+          clients (id, name, phone, national_id, address),
+          suppliers (id, name, phone, company),
+          installments (
+            *,
+            payments (*)
+          )
+        `)
+        .eq('id', id)
+        .single()
+
+      if (error) throw error
+
+      // Sort installments by number
+      if (data.installments) {
+        data.installments.sort((a, b) => a.installment_number - b.installment_number)
+      }
+
+      return data
+    },
+    enabled: !!id,
+  })
+}
+
+export const useCreateContract = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({ contractData, installments }) => {
+      const { data: { user } } = await supabase.auth.getUser()
+
+      // Insert contract
+      const { data: contract, error: contractError } = await supabase
+        .from('contracts')
+        .insert({ ...contractData, user_id: user.id })
+        .select()
+        .single()
+
+      if (contractError) throw contractError
+
+      // Insert all installments
+      const installmentRecords = installments.map((inst, idx) => ({
+        user_id: user.id,
+        contract_id: contract.id,
+        installment_number: idx + 1,
+        due_date: inst.due_date,
+        amount: inst.amount,
+        remaining_amount: inst.amount,
+        status: 'pending',
+      }))
+
+      const { error: installError } = await supabase
+        .from('installments')
+        .insert(installmentRecords)
+
+      if (installError) throw installError
+
+      return contract
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['contracts'] })
+      queryClient.invalidateQueries({ queryKey: ['clients'] })
+      queryClient.invalidateQueries({ queryKey: ['suppliers'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+  })
+}
+
+export const useUpdateContractStatus = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, status }) => {
+      const { data, error } = await supabase
+        .from('contracts')
+        .update({ status })
+        .eq('id', id)
+        .select()
+        .single()
+      if (error) throw error
+      return data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['contracts'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+  })
+}
+
+// ===================================================
+// INSTALLMENTS
+// ===================================================
+export const useInstallments = (filters = {}) => {
+  return useQuery({
+    queryKey: ['installments', filters],
+    queryFn: async () => {
+      let query = supabase
+        .from('installments')
+        .select(`
+          *,
+          contracts (
+            id, type, item_description,
+            clients (id, name, phone),
+            suppliers (id, name, phone)
+          ),
+          payments (*)
+        `)
+        .order('due_date', { ascending: true })
+
+      if (filters.status) {
+        if (Array.isArray(filters.status)) {
+          query = query.in('status', filters.status)
+        } else {
+          query = query.eq('status', filters.status)
+        }
+      }
+      if (filters.contract_id) query = query.eq('contract_id', filters.contract_id)
+      if (filters.date_from) query = query.gte('due_date', filters.date_from)
+      if (filters.date_to) query = query.lte('due_date', filters.date_to)
+
+      const { data, error } = await query
+      if (error) throw error
+      return data
+    },
+  })
+}
+
+// ===================================================
+// PAYMENTS (Record a payment)
+// ===================================================
+export const useRecordPayment = () => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({ installmentId, amount, method, referenceNumber, notes, paymentDate }) => {
+      const { data: { user } } = await supabase.auth.getUser()
+
+      // Get current installment
+      const { data: installment, error: fetchError } = await supabase
+        .from('installments')
+        .select('*, contracts(id)')
+        .eq('id', installmentId)
+        .single()
+
+      if (fetchError) throw fetchError
+
+      const payAmount = parseFloat(amount)
+      const remaining = parseFloat(installment.remaining_amount)
+      const newRemaining = Math.max(0, remaining - payAmount)
+      const isPaid = newRemaining === 0
+      const date = paymentDate || new Date().toISOString().split('T')[0]
+
+      // Insert payment record
+      const { error: payError } = await supabase
+        .from('payments')
+        .insert({
+          user_id: user.id,
+          installment_id: installmentId,
+          contract_id: installment.contract_id,
+          amount: payAmount,
+          payment_date: date,
+          method: method || 'cash',
+          reference_number: referenceNumber || null,
+          notes: notes || null,
+        })
+
+      if (payError) throw payError
+
+      // Update installment
+      const { error: updateError } = await supabase
+        .from('installments')
+        .update({
+          remaining_amount: newRemaining,
+          status: isPaid ? 'paid' : 'partial',
+          payment_date: isPaid ? date : installment.payment_date,
+          payment_method: isPaid ? method : installment.payment_method,
+        })
+        .eq('id', installmentId)
+
+      if (updateError) throw updateError
+
+      // Check if all installments of the contract are paid
+      if (isPaid) {
+        const { data: contractInstallments } = await supabase
+          .from('installments')
+          .select('id, status, remaining_amount')
+          .eq('contract_id', installment.contract_id)
+
+        const allPaid = contractInstallments.every(i =>
+          i.id === installmentId ? true : i.status === 'paid'
+        )
+
+        if (allPaid) {
+          await supabase
+            .from('contracts')
+            .update({ status: 'completed' })
+            .eq('id', installment.contract_id)
+        }
+      }
+
+      return { success: true, isPaid, newRemaining }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries()
+    },
+  })
+}
+
+// ===================================================
+// CALENDAR
+// ===================================================
+export const useCalendar = (year, month) => {
+  return useQuery({
+    queryKey: ['calendar', year, month],
+    queryFn: async () => {
+      const from = `${year}-${String(month).padStart(2, '0')}-01`
+      const lastDay = new Date(year, month, 0).getDate()
+      const to = `${year}-${String(month).padStart(2, '0')}-${lastDay}`
+
+      const { data, error } = await supabase
+        .from('installments')
+        .select(`
+          id, due_date, status, amount, remaining_amount,
+          contracts (
+            id, type, item_description,
+            clients (id, name),
+            suppliers (id, name)
+          )
+        `)
+        .gte('due_date', from)
+        .lte('due_date', to)
+        .order('due_date')
+
+      if (error) throw error
+
+      // Group by date
+      const byDate = {}
+      data.forEach(inst => {
+        if (!byDate[inst.due_date]) byDate[inst.due_date] = []
+        byDate[inst.due_date].push(inst)
+      })
+
+      return byDate
+    },
+  })
+}
+
+// ===================================================
+// SETTINGS
+// ===================================================
+export const useSettings = () => {
+  return useQuery({
+    queryKey: ['settings'],
+    queryFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      const { data, error } = await supabase
+        .from('settings')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle()
+
+      if (error) throw error
+
+      if (!data) {
+        // Create default settings
+        const { data: newSettings, error: createError } = await supabase
+          .from('settings')
+          .insert({ user_id: user.id })
+          .select()
+          .single()
+        if (createError) throw createError
+        return newSettings
+      }
+
+      return data
+    },
+  })
+}
+
+export const useUpdateSettings = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, ...data }) => {
+      const { data: result, error } = await supabase
+        .from('settings')
+        .update(data)
+        .eq('id', id)
+        .select()
+        .single()
+      if (error) throw error
+      return result
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+    },
+  })
+}
+
+// ===================================================
+// REPORTS
+// ===================================================
+export const useReport = (type, params = {}) => {
+  return useQuery({
+    queryKey: ['reports', type, params],
+    queryFn: async () => {
+      if (type === 'cashflow') {
+        const { year, month } = params
+        const from = `${year}-${String(month).padStart(2, '0')}-01`
+        const lastDay = new Date(year, month, 0).getDate()
+        const to = `${year}-${String(month).padStart(2, '0')}-${lastDay}`
+
+        const { data, error } = await supabase
+          .from('installments')
+          .select(`
+            *,
+            contracts (type, item_description, clients(name), suppliers(name))
+          `)
+          .gte('due_date', from)
+          .lte('due_date', to)
+          .order('due_date')
+
+        if (error) throw error
+
+        const receivables = data.filter(i => i.contracts?.type === 'RECEIVABLE')
+        const payables = data.filter(i => i.contracts?.type === 'PAYABLE')
+
+        return {
+          receivables,
+          payables,
+          expectedReceivables: receivables.reduce((s, i) => s + parseFloat(i.amount), 0),
+          expectedPayables: payables.reduce((s, i) => s + parseFloat(i.amount), 0),
+          actualReceivables: receivables
+            .filter(i => i.status === 'paid' || i.status === 'partial')
+            .reduce((s, i) => s + (parseFloat(i.amount) - parseFloat(i.remaining_amount)), 0),
+          actualPayables: payables
+            .filter(i => i.status === 'paid' || i.status === 'partial')
+            .reduce((s, i) => s + (parseFloat(i.amount) - parseFloat(i.remaining_amount)), 0),
+        }
+      }
+
+      if (type === 'aging') {
+        const today = new Date().toISOString().split('T')[0]
+        const { data, error } = await supabase
+          .from('installments')
+          .select(`
+            *,
+            contracts (type, item_description, clients(name), suppliers(name))
+          `)
+          .in('status', ['pending', 'partial', 'late'])
+          .lt('due_date', today)
+          .order('due_date')
+
+        if (error) throw error
+
+        const buckets = { '1-30': [], '31-60': [], '61-90': [], '90+': [] }
+        data.forEach(i => {
+          const days = Math.floor((new Date() - new Date(i.due_date)) / (1000 * 60 * 60 * 24))
+          if (days <= 30) buckets['1-30'].push({ ...i, daysOverdue: days })
+          else if (days <= 60) buckets['31-60'].push({ ...i, daysOverdue: days })
+          else if (days <= 90) buckets['61-90'].push({ ...i, daysOverdue: days })
+          else buckets['90+'].push({ ...i, daysOverdue: days })
+        })
+
+        return buckets
+      }
+
+      return null
+    },
+    enabled: !!type,
+  })
+}
