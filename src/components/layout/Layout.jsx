@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 import { useDashboard } from '@/hooks/useApi'
+import { isSupabaseConfigured, resetLocalDatabase } from '@/lib/supabase'
 import {
   LayoutDashboard, Users, Store, FileText, Calendar,
   BarChart3, Settings, LogOut, Menu, X, Moon, Sun,
@@ -182,6 +183,17 @@ export default function Layout({ children }) {
 
         {/* MAIN CONTENT */}
         <main className="flex-1 overflow-y-auto">
+          {!isSupabaseConfigured && (
+            <div className="bg-gradient-to-r from-amber-500/10 via-amber-600/10 to-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-center text-xs text-amber-800 dark:text-amber-300 flex flex-col sm:flex-row items-center justify-center gap-2">
+              <span>⚠️ <strong>وضع التجربة المحلي (Local Demo Mode)</strong> - يتم حفظ البيانات في المتصفح فقط.</span>
+              <button 
+                onClick={resetLocalDatabase} 
+                className="px-2 py-0.5 rounded bg-amber-600 text-white font-medium hover:bg-amber-700 transition-colors cursor-pointer text-[10px]"
+              >
+                إعادة تعيين البيانات (Reset)
+              </button>
+            </div>
+          )}
           <div className="max-w-6xl mx-auto p-4 lg:p-6">
             {children}
           </div>
