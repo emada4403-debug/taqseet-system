@@ -3,6 +3,32 @@ import { supabase } from '@/lib/supabase'
 import { isLate } from '@/lib/utils'
 import { parseISO } from 'date-fns'
 
+const checkSafeBalance = async (requiredAmount) => {
+  const { data: safeTxs, error } = await supabase
+    .from('safe_transactions')
+    .select('type, amount')
+
+  if (error) throw error
+
+  let totalDeposits = 0
+  let totalWithdrawals = 0
+
+  safeTxs?.forEach(t => {
+    const amt = parseFloat(t.amount || 0)
+    if (t.type === 'deposit') {
+      totalDeposits += amt
+    } else if (t.type === 'withdrawal') {
+      totalWithdrawals += amt
+    }
+  })
+
+  const currentBalance = totalDeposits - totalWithdrawals
+  if (currentBalance < requiredAmount) {
+    throw new Error(`رصيد الخزينة الحالي غير كافٍ! الرصيد المتوفر: ${currentBalance} ج.م والمطلوب سحبه: ${requiredAmount} ج.م. يرجى شحن الخزينة أولاً.`);
+  }
+}
+
+
 // ===================================================
 // DASHBOARD
 // ===================================================
@@ -339,6 +365,11 @@ export const useCreateContract = () => {
     mutationFn: async ({ contractData, installments }) => {
       const { data: { user } } = await supabase.auth.getUser()
 
+      // Enforce safe balance check for supplier (PAYABLE) contract down payments
+      if (contractData.type === 'PAYABLE' && parseFloat(contractData.down_payment || 0) > 0) {
+        await checkSafeBalance(parseFloat(contractData.down_payment))
+      }
+
       // Insert contract
       const { data: contract, error: contractError } = await supabase
         .from('contracts')
@@ -490,6 +521,13 @@ export const useRecordPayment = () => {
       if (fetchError) throw fetchError
 
       const payAmount = parseFloat(amount)
+
+      // Enforce safe balance check if paying a supplier (PAYABLE)
+      const isReceivable = installment.contracts?.type === 'RECEIVABLE'
+      if (!isReceivable) {
+        await checkSafeBalance(payAmount)
+      }
+
       const remaining = parseFloat(installment.remaining_amount)
       const newRemaining = Math.max(0, remaining - payAmount)
       const isPaid = newRemaining === 0
@@ -512,9 +550,8 @@ export const useRecordPayment = () => {
         .single()
 
       if (payError) throw payError
-
+      
       // Record in safe_transactions
-      const isReceivable = installment.contracts?.type === 'RECEIVABLE'
       const { error: safeError } = await supabase
         .from('safe_transactions')
         .insert({
@@ -755,6 +792,18 @@ export const useCreateProduct = () => {
     mutationFn: async ({ productData, purchaseMethod, supplierId, downPayment, installmentCount }) => {
       const { data: { user } } = await supabase.auth.getUser()
 
+      const totalPurchasePrice = (parseFloat(productData.purchase_price) || 0) * (parseInt(productData.stock) || 0)
+
+      // Enforce safe balance check
+      if (purchaseMethod === 'cash' && totalPurchasePrice > 0) {
+        await checkSafeBalance(totalPurchasePrice)
+      } else if (purchaseMethod === 'credit' && totalPurchasePrice > 0 && supplierId) {
+        const dp = parseFloat(downPayment || 0)
+        if (dp > 0) {
+          await checkSafeBalance(dp)
+        }
+      }
+
       // 1. Create product in products table
       const { data: product, error: productError } = await supabase
         .from('products')
@@ -771,8 +820,6 @@ export const useCreateProduct = () => {
         .single()
 
       if (productError) throw productError
-
-      const totalPurchasePrice = (parseFloat(productData.purchase_price) || 0) * (parseInt(productData.stock) || 0)
 
       // 2. Handle accounting
       if (purchaseMethod === 'cash' && totalPurchasePrice > 0) {
@@ -973,12 +1020,19 @@ export const useCreateManualSafeTransaction = () => {
   return useMutation({
     mutationFn: async ({ type, amount, category, notes, transaction_date }) => {
       const { data: { user } } = await supabase.auth.getUser()
+      const amt = parseFloat(amount)
+
+      // Enforce safe balance check for manual withdrawals
+      if (type === 'withdrawal') {
+        await checkSafeBalance(amt)
+      }
+
       const { data, error } = await supabase
         .from('safe_transactions')
         .insert({
           user_id: user.id,
           type,
-          amount: parseFloat(amount),
+          amount: amt,
           category,
           notes: notes || null,
           transaction_date: transaction_date || new Date().toISOString().split('T')[0]
@@ -1022,8 +1076,12 @@ export const useCreateExpense = () => {
   return useMutation({
     mutationFn: async ({ title, amount, category, notes, expense_date }) => {
       const { data: { user } } = await supabase.auth.getUser()
-      const date = expense_date || new Date().toISOString().split('T')[0]
       const amt = parseFloat(amount)
+
+      // Enforce safe balance check for expenses
+      await checkSafeBalance(amt)
+
+      const date = expense_date || new Date().toISOString().split('T')[0]
 
       // Insert expense
       const { data: expense, error: expenseError } = await supabase
