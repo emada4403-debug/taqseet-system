@@ -45,7 +45,7 @@ export default function NewContract() {
         ...f,
         product_id: prodId,
         item_description: selected.name,
-        total_price: f.type === 'RECEIVABLE' ? selected.installment_price.toString() : selected.purchase_price.toString()
+        total_price: f.type === 'RECEIVABLE' ? '' : selected.purchase_price.toString()
       }))
     }
   }

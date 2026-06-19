@@ -12,8 +12,6 @@ function ProductForm({ initialData = {}, onSubmit, loading, isEdit = false }) {
     name: initialData.name || '',
     sku: initialData.sku || '',
     purchase_price: initialData.purchase_price || '',
-    cash_price: initialData.cash_price || '',
-    installment_price: initialData.installment_price || '',
     stock: initialData.stock || '1',
     // Financial details
     purchaseMethod: 'cash', // 'cash' | 'credit'
@@ -28,8 +26,8 @@ function ProductForm({ initialData = {}, onSubmit, loading, isEdit = false }) {
       name: form.name,
       sku: form.sku,
       purchase_price: parseFloat(form.purchase_price) || 0,
-      cash_price: parseFloat(form.cash_price) || 0,
-      installment_price: parseFloat(form.installment_price) || 0,
+      cash_price: 0,
+      installment_price: 0,
       stock: parseInt(form.stock) || 0,
       purchaseMethod: form.purchaseMethod,
       supplierId: form.supplierId,
@@ -65,9 +63,9 @@ function ProductForm({ initialData = {}, onSubmit, loading, isEdit = false }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <div className="form-group">
-          <label className="label">سعر الشراء *</label>
+          <label className="label">سعر الشراء (التكلفة) *</label>
           <input 
             type="number" 
             className="input" 
@@ -78,40 +76,17 @@ function ProductForm({ initialData = {}, onSubmit, loading, isEdit = false }) {
           />
         </div>
         <div className="form-group">
-          <label className="label">سعر الكاش *</label>
+          <label className="label">الكمية المتوفرة بالمخزن *</label>
           <input 
             type="number" 
             className="input" 
             placeholder="0" 
-            value={form.cash_price}
-            onChange={e => setForm(f => ({ ...f, cash_price: e.target.value }))} 
+            value={form.stock}
+            onChange={e => setForm(f => ({ ...f, stock: e.target.value }))} 
             required 
+            min="1"
           />
         </div>
-        <div className="form-group">
-          <label className="label">سعر القسط *</label>
-          <input 
-            type="number" 
-            className="input" 
-            placeholder="0" 
-            value={form.installment_price}
-            onChange={e => setForm(f => ({ ...f, installment_price: e.target.value }))} 
-            required 
-          />
-        </div>
-      </div>
-
-      <div className="form-group">
-        <label className="label">الكمية المتوفرة بالمخزن *</label>
-        <input 
-          type="number" 
-          className="input" 
-          placeholder="0" 
-          value={form.stock}
-          onChange={e => setForm(f => ({ ...f, stock: e.target.value }))} 
-          required 
-          min="1"
-        />
       </div>
 
       {!isEdit && (
@@ -215,8 +190,6 @@ export default function Inventory() {
   // Calculated Inventory Statistics
   const totalStockItems = products?.reduce((sum, p) => sum + (p.stock || 0), 0) || 0
   const totalPurchaseValue = products?.reduce((sum, p) => sum + (p.purchase_price * (p.stock || 0)), 0) || 0
-  const totalInstallmentValue = products?.reduce((sum, p) => sum + (p.installment_price * (p.stock || 0)), 0) || 0
-  const expectedProfit = totalInstallmentValue - totalPurchaseValue
 
   const handleCreate = async (formData) => {
     try {
@@ -225,8 +198,6 @@ export default function Inventory() {
           name: formData.name,
           sku: formData.sku,
           purchase_price: formData.purchase_price,
-          cash_price: formData.cash_price,
-          installment_price: formData.installment_price,
           stock: formData.stock
         },
         purchaseMethod: formData.purchaseMethod,
@@ -248,8 +219,6 @@ export default function Inventory() {
         name: formData.name,
         sku: formData.sku,
         purchase_price: formData.purchase_price,
-        cash_price: formData.cash_price,
-        installment_price: formData.installment_price,
         stock: formData.stock
       })
       toast.success('تم تحديث بيانات المنتج بنجاح')
@@ -277,12 +246,22 @@ export default function Inventory() {
       </div>
 
       {/* Stats Summary */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="stat-card">
           <div className="flex items-center justify-between">
-            <span className="stat-label">إجمالي البضاعة</span>
+            <span className="stat-label">أنواع البضائع</span>
             <div className="w-8 h-8 rounded-lg bg-sky-50 dark:bg-sky-900/30 flex items-center justify-center text-sky-600">
               <Layers size={16} />
+            </div>
+          </div>
+          <div className="stat-value">{products?.length || 0} سلعة</div>
+        </div>
+
+        <div className="stat-card">
+          <div className="flex items-center justify-between">
+            <span className="stat-label">إجمالي الوحدات بالمخزن</span>
+            <div className="w-8 h-8 rounded-lg bg-purple-50 dark:bg-purple-900/30 flex items-center justify-center text-purple-600">
+              <Package size={16} />
             </div>
           </div>
           <div className="stat-value">{totalStockItems} وحدة</div>
@@ -290,32 +269,12 @@ export default function Inventory() {
         
         <div className="stat-card">
           <div className="flex items-center justify-between">
-            <span className="stat-label">قيمة الشراء</span>
+            <span className="stat-label">قيمة رأس المال (الشراء)</span>
             <div className="w-8 h-8 rounded-lg bg-amber-50 dark:bg-amber-900/30 flex items-center justify-center text-amber-600">
               <DollarSign size={16} />
             </div>
           </div>
           <div className="stat-value">{formatCurrency(totalPurchaseValue, symbol)}</div>
-        </div>
-
-        <div className="stat-card">
-          <div className="flex items-center justify-between">
-            <span className="stat-label">قيمة المبيعات (قسط)</span>
-            <div className="w-8 h-8 rounded-lg bg-green-50 dark:bg-green-900/30 flex items-center justify-center text-green-600">
-              <TrendingUp size={16} />
-            </div>
-          </div>
-          <div className="stat-value">{formatCurrency(totalInstallmentValue, symbol)}</div>
-        </div>
-
-        <div className="stat-card">
-          <div className="flex items-center justify-between">
-            <span className="stat-label">الأرباح المتوقعة</span>
-            <div className="w-8 h-8 rounded-lg bg-purple-50 dark:bg-purple-900/30 flex items-center justify-center text-purple-600">
-              <Package size={16} />
-            </div>
-          </div>
-          <div className="stat-value text-purple-600 dark:text-purple-400">{formatCurrency(expectedProfit, symbol)}</div>
         </div>
       </div>
 
@@ -367,19 +326,9 @@ export default function Inventory() {
               </div>
 
               {/* Price details */}
-              <div className="grid grid-cols-3 gap-2 py-2 border-y border-slate-100 dark:border-slate-700 text-xs">
-                <div className="text-center">
-                  <div className="text-muted">الشراء</div>
-                  <div className="font-semibold text-slate-700 dark:text-slate-300 mt-0.5">{formatCurrency(product.purchase_price, symbol)}</div>
-                </div>
-                <div className="text-center border-x border-slate-100 dark:border-slate-700">
-                  <div className="text-muted">كاش</div>
-                  <div className="font-semibold text-sky-600 dark:text-sky-400 mt-0.5">{formatCurrency(product.cash_price, symbol)}</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-muted">القسط</div>
-                  <div className="font-semibold text-success-600 dark:text-success-400 mt-0.5">{formatCurrency(product.installment_price, symbol)}</div>
-                </div>
+              <div className="py-2 border-y border-slate-100 dark:border-slate-700 text-xs flex justify-between">
+                <span className="text-muted">سعر الشراء (التكلفة):</span>
+                <span className="font-bold text-slate-700 dark:text-slate-300">{formatCurrency(product.purchase_price, symbol)}</span>
               </div>
 
               {/* Stock status */}
