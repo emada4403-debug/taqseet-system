@@ -348,6 +348,24 @@ export const useCreateContract = () => {
 
       if (contractError) throw contractError
 
+      // If a product is linked, update its stock
+      if (contractData.product_id) {
+        const { data: product } = await supabase
+          .from('products')
+          .select('stock')
+          .eq('id', contractData.product_id)
+          .single()
+
+        if (product) {
+          const change = contractData.type === 'RECEIVABLE' ? -1 : 1
+          const newStock = Math.max(0, (product.stock || 0) + change)
+          await supabase
+            .from('products')
+            .update({ stock: newStock })
+            .eq('id', contractData.product_id)
+        }
+      }
+
       // Insert all installments
       const installmentRecords = installments.map((inst, idx) => ({
         user_id: user.id,
@@ -372,6 +390,7 @@ export const useCreateContract = () => {
       queryClient.invalidateQueries({ queryKey: ['clients'] })
       queryClient.invalidateQueries({ queryKey: ['suppliers'] })
       queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['products'] })
     },
   })
 }
@@ -678,3 +697,59 @@ export const useReport = (type, params = {}) => {
     enabled: !!type,
   })
 }
+
+// ===================================================
+// PRODUCTS & INVENTORY
+// ===================================================
+export const useProducts = () => {
+  return useQuery({
+    queryKey: ['products'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .order('name')
+      if (error) throw error
+      return data
+    },
+  })
+}
+
+export const useCreateProduct = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (data) => {
+      const { data: { user } } = await supabase.auth.getUser()
+      const { data: result, error } = await supabase
+        .from('products')
+        .insert({ ...data, user_id: user.id })
+        .select()
+        .single()
+      if (error) throw error
+      return result
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] })
+    },
+  })
+}
+
+export const useUpdateProduct = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, ...data }) => {
+      const { data: result, error } = await supabase
+        .from('products')
+        .update(data)
+        .eq('id', id)
+        .select()
+        .single()
+      if (error) throw error
+      return result
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] })
+    },
+  })
+}
+

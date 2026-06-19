@@ -6,13 +6,14 @@ import { isSupabaseConfigured, resetLocalDatabase } from '@/lib/supabase'
 import {
   LayoutDashboard, Users, Store, FileText, Calendar,
   BarChart3, Settings, LogOut, Menu, X, Moon, Sun,
-  TrendingUp, TrendingDown, Bell
+  TrendingUp, TrendingDown, Bell, Package
 } from 'lucide-react'
 
 const NAV_ITEMS = [
   { to: '/', icon: LayoutDashboard, label: 'الرئيسية', exact: true },
   { to: '/receivables', icon: TrendingUp, label: 'المديونيات', badge: 'receivables' },
   { to: '/payables', icon: TrendingDown, label: 'المستحقات', badge: 'payables' },
+  { to: '/inventory', icon: Package, label: 'المخزن' },
   { to: '/contracts/new', icon: FileText, label: 'عقد جديد' },
   { to: '/calendar', icon: Calendar, label: 'التقويم' },
   { to: '/reports', icon: BarChart3, label: 'التقارير' },

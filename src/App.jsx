@@ -13,6 +13,7 @@ import NewContract from '@/pages/NewContract'
 import CalendarPage from '@/pages/Calendar'
 import Reports from '@/pages/Reports'
 import SettingsPage from '@/pages/Settings'
+import Inventory from '@/pages/Inventory'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -98,6 +99,10 @@ function AppRoutes() {
 
       <Route path="/settings" element={
         <ProtectedRoute><SettingsPage /></ProtectedRoute>
+      } />
+
+      <Route path="/inventory" element={
+        <ProtectedRoute><Inventory /></ProtectedRoute>
       } />
 
       <Route path="*" element={<Navigate to="/" replace />} />

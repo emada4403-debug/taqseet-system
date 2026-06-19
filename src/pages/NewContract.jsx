@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useClients, useSuppliers, useCreateContract, useSettings } from '@/hooks/useApi'
+import { useClients, useSuppliers, useCreateContract, useSettings, useProducts } from '@/hooks/useApi'
 import { useToast } from '@/context/ToastContext'
 import { formatCurrency, formatDate, generateInstallmentDates } from '@/lib/utils'
-import { ArrowRight, Calculator, Calendar, FileText, User, Store, Info } from 'lucide-react'
+import { ArrowRight, Calculator, Calendar, FileText, User, Store, Info, Package } from 'lucide-react'
 
 const STEPS = ['نوع العقد', 'بيانات العقد', 'مراجعة وتأكيد']
 
@@ -13,6 +13,7 @@ export default function NewContract() {
   const { data: clients } = useClients()
   const { data: suppliers } = useSuppliers()
   const { data: settings } = useSettings()
+  const { data: products } = useProducts()
   const createContract = useCreateContract()
   const toast = useToast()
 
@@ -21,6 +22,7 @@ export default function NewContract() {
     type: searchParams.get('type') || 'RECEIVABLE',
     client_id: searchParams.get('client') || '',
     supplier_id: searchParams.get('supplier') || '',
+    product_id: '',
     item_description: '',
     total_price: '',
     down_payment: '0',
@@ -29,6 +31,24 @@ export default function NewContract() {
     start_date: new Date().toISOString().split('T')[0],
     notes: '',
   })
+
+  const handleProductChange = (e) => {
+    const prodId = e.target.value
+    if (!prodId) {
+      setForm(f => ({ ...f, product_id: '', item_description: '', total_price: '' }))
+      return
+    }
+
+    const selected = products?.find(p => p.id === prodId)
+    if (selected) {
+      setForm(f => ({
+        ...f,
+        product_id: prodId,
+        item_description: selected.name,
+        total_price: f.type === 'RECEIVABLE' ? selected.installment_price.toString() : selected.purchase_price.toString()
+      }))
+    }
+  }
 
   const symbol = settings?.currency_symbol || 'ج.م'
 
@@ -69,6 +89,7 @@ export default function NewContract() {
         type: form.type,
         client_id: isReceivable ? form.client_id || null : null,
         supplier_id: !isReceivable ? form.supplier_id || null : null,
+        product_id: form.product_id || null,
         item_description: form.item_description,
         total_price: totalPrice,
         down_payment: downPayment,
@@ -207,8 +228,24 @@ export default function NewContract() {
           <h2 className="font-bold text-heading">بيانات العقد</h2>
 
           <div className="form-group">
+            <label className="label"><Package size={14} className="inline ml-1" />اختر سلعة من المخزن (اختياري)</label>
+            <select
+              className="input"
+              value={form.product_id}
+              onChange={handleProductChange}
+            >
+              <option value="">-- سلعة غير مسجلة بالمخزن (إدخال يدوي) --</option>
+              {products?.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.name} (المتوفر: {p.stock} وحدة)
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="form-group">
             <label className="label"><FileText size={14} className="inline ml-1" />وصف البضاعة / الخدمة *</label>
-            <input className="input" placeholder="تلفزيون سامسونج 55 بوصة..." value={form.item_description}
+            <input className="input" placeholder="مثال: تلفزيون سامسونج..." value={form.item_description}
               onChange={e => setForm(f => ({ ...f, item_description: e.target.value }))} required />
           </div>
 
