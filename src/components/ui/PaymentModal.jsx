@@ -193,6 +193,11 @@ export default function PaymentModal({ installment, isOpen, onClose, currencySym
               {currencySymbol}
             </span>
           </div>
+          {form.amount && parseFloat(form.amount) > 0 && (
+            <p className="text-[11px] font-bold text-success-600 mt-1">
+              تأكيد المبلغ: {formatCurrency(parseFloat(form.amount), currencySymbol)}
+            </p>
+          )}
           <div className="flex gap-2 mt-1.5">
             <button
               type="button"

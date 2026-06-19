@@ -257,6 +257,11 @@ export default function NewContract() {
                   value={form.total_price} onChange={e => setForm(f => ({ ...f, total_price: e.target.value }))} required />
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
               </div>
+              {form.total_price && parseFloat(form.total_price) > 0 && (
+                <p className="text-[11px] font-bold text-success-600 mt-1">
+                  تأكيد السعر: {formatCurrency(parseFloat(form.total_price), symbol)}
+                </p>
+              )}
             </div>
             <div className="form-group">
               <label className="label">المقدم / الدفعة الأولى</label>
@@ -265,6 +270,11 @@ export default function NewContract() {
                   value={form.down_payment} onChange={e => setForm(f => ({ ...f, down_payment: e.target.value }))} />
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
               </div>
+              {form.down_payment && parseFloat(form.down_payment) > 0 && (
+                <p className="text-[11px] font-bold text-success-600 mt-1">
+                  تأكيد المقدم: {formatCurrency(parseFloat(form.down_payment), symbol)}
+                </p>
+              )}
             </div>
           </div>
 

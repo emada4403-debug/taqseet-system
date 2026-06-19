@@ -74,6 +74,11 @@ function ProductForm({ initialData = {}, onSubmit, loading, isEdit = false }) {
             onChange={e => setForm(f => ({ ...f, purchase_price: e.target.value }))} 
             required 
           />
+          {form.purchase_price && parseFloat(form.purchase_price) > 0 && (
+            <p className="text-[11px] font-bold text-success-600 mt-1">
+              تأكيد السعر: {formatCurrency(parseFloat(form.purchase_price), 'ج.م')}
+            </p>
+          )}
         </div>
         <div className="form-group">
           <label className="label">الكمية المتوفرة بالمخزن *</label>
@@ -148,6 +153,11 @@ function ProductForm({ initialData = {}, onSubmit, loading, isEdit = false }) {
                     value={form.downPayment}
                     onChange={e => setForm(f => ({ ...f, downPayment: e.target.value }))}
                   />
+                  {form.downPayment && parseFloat(form.downPayment) > 0 && (
+                    <p className="text-[10px] font-bold text-success-600 mt-0.5">
+                      تأكيد المبلغ: {formatCurrency(parseFloat(form.downPayment), 'ج.م')}
+                    </p>
+                  )}
                 </div>
                 <div className="form-group">
                   <label className="label">عدد أقساط المورد</label>

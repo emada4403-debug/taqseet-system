@@ -527,6 +527,11 @@ export default function SafeLedger() {
                 {symbol}
               </span>
             </div>
+            {txForm.amount && parseFloat(txForm.amount) > 0 && (
+              <p className="text-[11px] font-bold text-success-600 mt-1">
+                تأكيد المبلغ: {formatCurrency(parseFloat(txForm.amount), symbol)}
+              </p>
+            )}
           </div>
 
           <div className="form-group">
@@ -608,6 +613,11 @@ export default function SafeLedger() {
                   {symbol}
                 </span>
               </div>
+              {expenseForm.amount && parseFloat(expenseForm.amount) > 0 && (
+                <p className="text-[11px] font-bold text-success-600 mt-1">
+                  تأكيد المبلغ: {formatCurrency(parseFloat(expenseForm.amount), symbol)}
+                </p>
+              )}
             </div>
 
             <div className="form-group">
