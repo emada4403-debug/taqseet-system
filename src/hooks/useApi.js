@@ -752,18 +752,119 @@ export const useProducts = () => {
 export const useCreateProduct = () => {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async (data) => {
+    mutationFn: async ({ productData, purchaseMethod, supplierId, downPayment, installmentCount }) => {
       const { data: { user } } = await supabase.auth.getUser()
-      const { data: result, error } = await supabase
+
+      // 1. Create product in products table
+      const { data: product, error: productError } = await supabase
         .from('products')
-        .insert({ ...data, user_id: user.id })
+        .insert({
+          user_id: user.id,
+          name: productData.name,
+          sku: productData.sku || null,
+          purchase_price: parseFloat(productData.purchase_price) || 0,
+          cash_price: parseFloat(productData.cash_price) || 0,
+          installment_price: parseFloat(productData.installment_price) || 0,
+          stock: parseInt(productData.stock) || 0
+        })
         .select()
         .single()
-      if (error) throw error
-      return result
+
+      if (productError) throw productError
+
+      const totalPurchasePrice = (parseFloat(productData.purchase_price) || 0) * (parseInt(productData.stock) || 0)
+
+      // 2. Handle accounting
+      if (purchaseMethod === 'cash' && totalPurchasePrice > 0) {
+        // Record immediate cash withdrawal from safe
+        const { error: safeError } = await supabase
+          .from('safe_transactions')
+          .insert({
+            user_id: user.id,
+            type: 'withdrawal',
+            amount: totalPurchasePrice,
+            category: 'manual_withdrawal',
+            notes: `شراء بضاعة نقداً للمخزن: ${product.name} (عدد ${product.stock} وحدات)`,
+            transaction_date: new Date().toISOString().split('T')[0]
+          })
+        if (safeError) throw safeError
+      } else if (purchaseMethod === 'credit' && totalPurchasePrice > 0 && supplierId) {
+        // Create a PAYABLE contract for supplier
+        const dp = parseFloat(downPayment || 0)
+        const rem = totalPurchasePrice - dp
+        const instCount = parseInt(installmentCount || 1)
+        const instAmount = rem / instCount
+        const startDate = new Date().toISOString().split('T')[0]
+
+        const { data: contract, error: contractError } = await supabase
+          .from('contracts')
+          .insert({
+            user_id: user.id,
+            type: 'PAYABLE',
+            supplier_id: supplierId,
+            product_id: product.id,
+            item_description: `شراء بضاعة بالآجل: ${product.name} (عدد ${product.stock} وحدات)`,
+            total_price: totalPurchasePrice,
+            down_payment: dp,
+            installment_count: instCount,
+            installment_amount: instAmount,
+            start_date: startDate,
+            due_day: 1,
+            status: 'active'
+          })
+          .select()
+          .single()
+
+        if (contractError) throw contractError
+
+        // Record down payment in safe as withdrawal if dp > 0
+        if (dp > 0) {
+          const { error: safeError } = await supabase
+            .from('safe_transactions')
+            .insert({
+              user_id: user.id,
+              type: 'withdrawal',
+              amount: dp,
+              category: 'contract_downpayment',
+              contract_id: contract.id,
+              transaction_date: startDate,
+              notes: `مقدم عقد بضاعة آجل للمخزن: ${contract.item_description}`
+            })
+          if (safeError) throw safeError
+        }
+
+        // Generate installments
+        const installmentRecords = Array.from({ length: instCount }).map((_, idx) => {
+          const dateObj = new Date()
+          dateObj.setMonth(dateObj.getMonth() + idx + 1)
+          dateObj.setDate(1) // due_day = 1
+
+          return {
+            user_id: user.id,
+            contract_id: contract.id,
+            installment_number: idx + 1,
+            due_date: dateObj.toISOString().split('T')[0],
+            amount: instAmount,
+            remaining_amount: instAmount,
+            status: 'pending'
+          }
+        })
+
+        const { error: instError } = await supabase
+          .from('installments')
+          .insert(installmentRecords)
+
+        if (instError) throw instError
+      }
+
+      return product
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products'] })
+      queryClient.invalidateQueries({ queryKey: ['safe_transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['safe_summary'] })
+      queryClient.invalidateQueries({ queryKey: ['contracts'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     },
   })
 }

@@ -1,29 +1,40 @@
 import { useState } from 'react'
-import { useProducts, useCreateProduct, useUpdateProduct, useSettings } from '@/hooks/useApi'
+import { useProducts, useCreateProduct, useUpdateProduct, useSettings, useSuppliers } from '@/hooks/useApi'
 import { formatCurrency } from '@/lib/utils'
 import { PageLoader, ErrorState, EmptyState } from '@/components/ui/States'
 import Modal from '@/components/ui/Modal'
 import { useToast } from '@/context/ToastContext'
 import { Package, Plus, Search, Edit, Barcode, DollarSign, TrendingUp, Layers } from 'lucide-react'
 
-function ProductForm({ initialData = {}, onSubmit, loading }) {
+function ProductForm({ initialData = {}, onSubmit, loading, isEdit = false }) {
+  const { data: suppliers } = useSuppliers()
   const [form, setForm] = useState({
     name: initialData.name || '',
     sku: initialData.sku || '',
     purchase_price: initialData.purchase_price || '',
     cash_price: initialData.cash_price || '',
     installment_price: initialData.installment_price || '',
-    stock: initialData.stock || '0',
+    stock: initialData.stock || '1',
+    // Financial details
+    purchaseMethod: 'cash', // 'cash' | 'credit'
+    supplierId: '',
+    downPayment: '0',
+    installmentCount: '1'
   })
 
   const handleSubmit = (e) => {
     e.preventDefault()
     onSubmit({
-      ...form,
+      name: form.name,
+      sku: form.sku,
       purchase_price: parseFloat(form.purchase_price) || 0,
       cash_price: parseFloat(form.cash_price) || 0,
       installment_price: parseFloat(form.installment_price) || 0,
       stock: parseInt(form.stock) || 0,
+      purchaseMethod: form.purchaseMethod,
+      supplierId: form.supplierId,
+      downPayment: parseFloat(form.downPayment) || 0,
+      installmentCount: parseInt(form.installmentCount) || 1
     })
   }
 
@@ -99,9 +110,86 @@ function ProductForm({ initialData = {}, onSubmit, loading }) {
           value={form.stock}
           onChange={e => setForm(f => ({ ...f, stock: e.target.value }))} 
           required 
-          min="0"
+          min="1"
         />
       </div>
+
+      {!isEdit && (
+        <div className="bg-surface-50 dark:bg-surface-800/40 p-4 rounded-xl border border-surface-200 dark:border-surface-700/50 space-y-4 mt-2">
+          <h3 className="text-xs font-bold text-heading">الموقف المالي وطريقة الشراء للسلعة</h3>
+          
+          <div className="form-group">
+            <label className="label">طريقة الدفع للمخزون *</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setForm(f => ({ ...f, purchaseMethod: 'cash' }))}
+                className={`py-2 px-3 rounded-xl text-xs font-semibold border-2 transition-all ${
+                  form.purchaseMethod === 'cash'
+                    ? 'border-success-500 bg-success-50 dark:bg-success-950/20 text-success-700 dark:text-success-400'
+                    : 'border-surface-200 dark:border-surface-700 text-muted hover:border-success-300'
+                }`}
+              >
+                شراء نقدي (كاش - يخصم من الخزينة)
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm(f => ({ ...f, purchaseMethod: 'credit' }))}
+                className={`py-2 px-3 rounded-xl text-xs font-semibold border-2 transition-all ${
+                  form.purchaseMethod === 'credit'
+                    ? 'border-primary-500 bg-primary-50 dark:bg-primary-950/20 text-primary-700 dark:text-primary-400'
+                    : 'border-surface-200 dark:border-surface-700 text-muted hover:border-primary-300'
+                }`}
+              >
+                شراء بالآجل (حساب مورد)
+              </button>
+            </div>
+          </div>
+
+          {form.purchaseMethod === 'credit' && (
+            <div className="space-y-3">
+              <div className="form-group">
+                <label className="label">اختر المورد المالي *</label>
+                <select
+                  className="input text-xs"
+                  value={form.supplierId}
+                  onChange={e => setForm(f => ({ ...f, supplierId: e.target.value }))}
+                  required={form.purchaseMethod === 'credit'}
+                >
+                  <option value="">-- اختر مورد --</option>
+                  {suppliers?.map(s => (
+                    <option key={s.id} value={s.id}>{s.name} {s.company ? `(${s.company})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="form-group">
+                  <label className="label">الدفعة الأولى / المقدم</label>
+                  <input
+                    type="number"
+                    className="input text-xs"
+                    placeholder="0"
+                    value={form.downPayment}
+                    onChange={e => setForm(f => ({ ...f, downPayment: e.target.value }))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="label">عدد أقساط المورد</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    className="input text-xs"
+                    value={form.installmentCount}
+                    onChange={e => setForm(f => ({ ...f, installmentCount: e.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </form>
   )
 }
@@ -130,19 +218,40 @@ export default function Inventory() {
   const totalInstallmentValue = products?.reduce((sum, p) => sum + (p.installment_price * (p.stock || 0)), 0) || 0
   const expectedProfit = totalInstallmentValue - totalPurchaseValue
 
-  const handleCreate = async (data) => {
+  const handleCreate = async (formData) => {
     try {
-      await createProduct.mutateAsync(data)
-      toast.success('تم إضافة المنتج للمخزن بنجاح')
+      await createProduct.mutateAsync({
+        productData: {
+          name: formData.name,
+          sku: formData.sku,
+          purchase_price: formData.purchase_price,
+          cash_price: formData.cash_price,
+          installment_price: formData.installment_price,
+          stock: formData.stock
+        },
+        purchaseMethod: formData.purchaseMethod,
+        supplierId: formData.supplierId,
+        downPayment: formData.downPayment,
+        installmentCount: formData.installmentCount
+      })
+      toast.success('تم إضافة المنتج وتحديث الحسابات بنجاح ✓')
       setShowAdd(false)
     } catch (err) {
       toast.error(err.message || 'فشل إضافة المنتج')
     }
   }
 
-  const handleUpdate = async (data) => {
+  const handleUpdate = async (formData) => {
     try {
-      await updateProduct.mutateAsync({ id: selectedProduct.id, ...data })
+      await updateProduct.mutateAsync({
+        id: selectedProduct.id,
+        name: formData.name,
+        sku: formData.sku,
+        purchase_price: formData.purchase_price,
+        cash_price: formData.cash_price,
+        installment_price: formData.installment_price,
+        stock: formData.stock
+      })
       toast.success('تم تحديث بيانات المنتج بنجاح')
       setSelectedProduct(null)
     } catch (err) {
@@ -337,6 +446,7 @@ export default function Inventory() {
             initialData={selectedProduct} 
             onSubmit={handleUpdate} 
             loading={updateProduct.isPending} 
+            isEdit={true}
           />
         )}
       </Modal>
