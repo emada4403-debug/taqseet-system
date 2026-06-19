@@ -15,8 +15,9 @@ import { useToast } from '@/context/ToastContext'
 import {
   ArrowRight, Phone, MapPin, CreditCard, User,
   ChevronDown, ChevronUp, MessageCircle, ExternalLink,
-  FileText, Calendar, TrendingUp, Plus, Edit, Trash2
+  FileText, Calendar, TrendingUp, Plus, Edit, Trash2, Printer
 } from 'lucide-react'
+import { StatementPrintTemplate } from '@/components/ui/PrintTemplates'
 
 function ContractCard({ contract, symbol, onPay, onWhatsApp }) {
   const [expanded, setExpanded] = useState(false)
@@ -239,7 +240,11 @@ export default function ClientDetail() {
             <p className="text-muted text-sm">سجل العميل والأقساط</p>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2 no-print">
+          <button onClick={() => window.print()} className="btn-success">
+            <Printer size={16} />
+            <span>طباعة كشف الحساب</span>
+          </button>
           <button onClick={() => setShowEdit(true)} className="btn-secondary">
             <Edit size={16} />
             <span>تعديل البيانات</span>
@@ -403,6 +408,8 @@ export default function ClientDetail() {
           </p>
         </div>
       </Modal>
+
+      <StatementPrintTemplate client={client} symbol={symbol} businessSettings={settings} />
     </div>
   )
 }

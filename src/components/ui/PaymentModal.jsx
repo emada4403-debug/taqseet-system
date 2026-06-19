@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { useRecordPayment } from '@/hooks/useApi'
+import { useRecordPayment, useSettings } from '@/hooks/useApi'
 import { useToast } from '@/context/ToastContext'
 import { formatCurrency, formatDate, getInstallmentStatusLabel } from '@/lib/utils'
 import Modal from './Modal'
-import { DollarSign, Calendar, CreditCard, FileText, Hash } from 'lucide-react'
+import { DollarSign, Calendar, CreditCard, FileText, Hash, Printer, CheckCircle } from 'lucide-react'
+import { ReceiptPrintTemplate } from './PrintTemplates'
 
 const METHODS = [
   { value: 'cash', label: 'نقدي' },
@@ -15,6 +16,8 @@ const METHODS = [
 export default function PaymentModal({ installment, isOpen, onClose, currencySymbol = 'ج.م' }) {
   const toast = useToast()
   const recordPayment = useRecordPayment()
+  const { data: settings } = useSettings()
+  
   const [form, setForm] = useState({
     amount: '',
     method: 'cash',
@@ -23,9 +26,19 @@ export default function PaymentModal({ installment, isOpen, onClose, currencySym
     paymentDate: new Date().toISOString().split('T')[0],
   })
 
+  const [isSuccess, setIsSuccess] = useState(false)
+  const [recordedPayment, setRecordedPayment] = useState(null)
+
   if (!installment) return null
 
   const maxAmount = parseFloat(installment.remaining_amount || installment.amount)
+
+  const handleClose = () => {
+    setIsSuccess(false)
+    setRecordedPayment(null)
+    setForm({ amount: '', method: 'cash', referenceNumber: '', notes: '', paymentDate: new Date().toISOString().split('T')[0] })
+    onClose()
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -50,8 +63,15 @@ export default function PaymentModal({ installment, isOpen, onClose, currencySym
         paymentDate: form.paymentDate,
       })
       toast.success('تم تسجيل الدفعة بنجاح ✓')
-      onClose()
-      setForm({ amount: '', method: 'cash', referenceNumber: '', notes: '', paymentDate: new Date().toISOString().split('T')[0] })
+      
+      setRecordedPayment({
+        amount,
+        method: form.method,
+        referenceNumber: form.referenceNumber,
+        notes: form.notes,
+        paymentDate: form.paymentDate,
+      })
+      setIsSuccess(true)
     } catch (err) {
       toast.error(err.message || 'فشل تسجيل الدفعة')
     }
@@ -60,14 +80,59 @@ export default function PaymentModal({ installment, isOpen, onClose, currencySym
   const contractInfo = installment.contracts
   const partyName = contractInfo?.clients?.name || contractInfo?.suppliers?.name || 'غير محدد'
 
+  if (isSuccess) {
+    return (
+      <Modal
+        isOpen={isOpen}
+        onClose={handleClose}
+        title="نجاح العملية"
+        footer={
+          <div className="flex gap-3 w-full no-print">
+            <button type="button" onClick={handleClose} className="btn-secondary flex-1">
+              إغلاق
+            </button>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="btn-success flex-1"
+            >
+              <Printer size={16} />
+              <span>طباعة إيصال السداد</span>
+            </button>
+          </div>
+        }
+      >
+        <div className="text-center py-6 space-y-4 no-print">
+          <div className="w-16 h-16 rounded-full bg-green-100 dark:bg-green-950/20 text-green-600 flex items-center justify-center mx-auto">
+            <CheckCircle size={36} />
+          </div>
+          <div className="space-y-1">
+            <h3 className="font-bold text-heading text-lg">تم تسجيل الدفعة بنجاح!</h3>
+            <p className="text-muted text-sm">
+              تم سداد مبلغ {formatCurrency(recordedPayment.amount, currencySymbol)} بنجاح.
+            </p>
+          </div>
+        </div>
+
+        {/* This is hidden on screen, but shows on printing */}
+        <ReceiptPrintTemplate
+          paymentData={recordedPayment}
+          installment={installment}
+          clientName={partyName}
+          businessSettings={settings}
+        />
+      </Modal>
+    )
+  }
+
   return (
     <Modal
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleClose}
       title="تسجيل دفعة"
       footer={
         <div className="flex gap-3 w-full">
-          <button type="button" onClick={onClose} className="btn-secondary flex-1">
+          <button type="button" onClick={handleClose} className="btn-secondary flex-1">
             إلغاء
           </button>
           <button

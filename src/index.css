@@ -346,3 +346,40 @@
 }
 
 .calendar-dot { @apply w-1.5 h-1.5 rounded-full; }
+
+/* ===================================================
+   PRINT STYLES
+   =================================================== */
+@media print {
+  /* Hide all app elements that should not be printed */
+  header, aside, .no-print, button, .btn, .btn-ghost, .btn-primary, .btn-secondary, .btn-success, .btn-danger, nav, footer, .modal-overlay {
+    display: none !important;
+  }
+
+  body, html {
+    background: white !important;
+    color: black !important;
+    font-size: 11pt;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+  }
+
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+}
+
+/* Hidden by default in normal screen view */
+.print-only {
+  display: none;
+}
+

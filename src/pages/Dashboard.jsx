@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useDashboard, useSettings } from '@/hooks/useApi'
+import { useDashboard, useSettings, useSafeSummary } from '@/hooks/useApi'
 import { formatCurrency, formatDate, getInstallmentStatusClass, getInstallmentStatusLabel } from '@/lib/utils'
 import { PageLoader, ErrorState } from '@/components/ui/States'
 import PaymentModal from '@/components/ui/PaymentModal'
 import {
   TrendingUp, TrendingDown, DollarSign, AlertTriangle,
-  Calendar, Clock, ChevronLeft, ArrowUpRight
+  Calendar, Clock, ChevronLeft, ArrowUpRight, Wallet
 } from 'lucide-react'
 
 function StatCard({ label, value, icon: Icon, color, sub }) {
@@ -69,18 +69,26 @@ function InstallmentItem({ installment, onPay, symbol }) {
 
 export default function Dashboard() {
   const { data, isLoading, error, refetch } = useDashboard()
+  const { data: safeSummary, isLoading: isSafeLoading, refetch: refetchSafe } = useSafeSummary()
   const { data: settings } = useSettings()
   const [selectedInstallment, setSelectedInstallment] = useState(null)
   const symbol = settings?.currency_symbol || 'ج.م'
 
-  if (isLoading) return <PageLoader />
-  if (error) return <ErrorState error={error} onRetry={refetch} />
+  if (isLoading || isSafeLoading) return <PageLoader />
+  
+  const handleRetry = () => {
+    refetch()
+    refetchSafe()
+  }
+
+  if (error) return <ErrorState error={error} onRetry={handleRetry} />
 
   const {
-    totalReceivables, totalPayables, netCash,
+    totalReceivables, totalPayables,
     todayInstallments, weekInstallments, lateCount, allInstallments
   } = data
 
+  const safeBalance = safeSummary?.balance || 0
   const lateInstallments = allInstallments?.filter(i => i.status === 'late') || []
 
   return (
@@ -127,11 +135,11 @@ export default function Dashboard() {
           sub="للموردين"
         />
         <StatCard
-          label="صافي الكاش"
-          value={formatCurrency(Math.abs(netCash), symbol)}
-          icon={DollarSign}
-          color={netCash >= 0 ? "border-primary-500 text-primary-600" : "border-warning-500 text-warning-600"}
-          sub={netCash >= 0 ? "لصالحك" : "عليك"}
+          label="رصيد الخزينة"
+          value={formatCurrency(safeBalance, symbol)}
+          icon={Wallet}
+          color={safeBalance >= 0 ? "border-primary-500 text-primary-600" : "border-danger-500 text-danger-600"}
+          sub="السيولة النقدية المتوفرة"
         />
         <StatCard
           label="أقساط متأخرة"

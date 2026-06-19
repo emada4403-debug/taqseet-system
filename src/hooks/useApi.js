@@ -348,6 +348,23 @@ export const useCreateContract = () => {
 
       if (contractError) throw contractError
 
+      // Record down payment in safe if > 0
+      if (parseFloat(contract.down_payment || 0) > 0) {
+        const isReceivable = contract.type === 'RECEIVABLE'
+        const { error: safeError } = await supabase
+          .from('safe_transactions')
+          .insert({
+            user_id: user.id,
+            type: isReceivable ? 'deposit' : 'withdrawal',
+            amount: parseFloat(contract.down_payment),
+            category: 'contract_downpayment',
+            contract_id: contract.id,
+            transaction_date: contract.start_date,
+            notes: `مقدم عقد: ${contract.item_description}`,
+          })
+        if (safeError) throw safeError
+      }
+
       // If a product is linked, update its stock
       if (contractData.product_id) {
         const { data: product } = await supabase
@@ -466,7 +483,7 @@ export const useRecordPayment = () => {
       // Get current installment
       const { data: installment, error: fetchError } = await supabase
         .from('installments')
-        .select('*, contracts(id)')
+        .select('*, contracts(id, type, item_description)')
         .eq('id', installmentId)
         .single()
 
@@ -479,7 +496,7 @@ export const useRecordPayment = () => {
       const date = paymentDate || new Date().toISOString().split('T')[0]
 
       // Insert payment record
-      const { error: payError } = await supabase
+      const { data: paymentRecord, error: payError } = await supabase
         .from('payments')
         .insert({
           user_id: user.id,
@@ -491,8 +508,25 @@ export const useRecordPayment = () => {
           reference_number: referenceNumber || null,
           notes: notes || null,
         })
+        .select()
+        .single()
 
       if (payError) throw payError
+
+      // Record in safe_transactions
+      const isReceivable = installment.contracts?.type === 'RECEIVABLE'
+      const { error: safeError } = await supabase
+        .from('safe_transactions')
+        .insert({
+          user_id: user.id,
+          type: isReceivable ? 'deposit' : 'withdrawal',
+          amount: payAmount,
+          category: isReceivable ? 'payment_received' : 'supplier_paid',
+          payment_id: paymentRecord.id,
+          transaction_date: date,
+          notes: `سداد قسط عقد: ${installment.contracts?.item_description || ''}`,
+        })
+      if (safeError) throw safeError
 
       // Update installment
       const { error: updateError } = await supabase
@@ -750,6 +784,185 @@ export const useUpdateProduct = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products'] })
     },
+  })
+}
+
+// ===================================================
+// SAFE & EXPENSES
+// ===================================================
+export const useSafeTransactions = (filters = {}) => {
+  return useQuery({
+    queryKey: ['safe_transactions', filters],
+    queryFn: async () => {
+      let query = supabase
+        .from('safe_transactions')
+        .select(`
+          *,
+          payments (
+            id,
+            installment_id,
+            installments (
+              installment_number,
+              contracts (
+                item_description,
+                clients (name),
+                suppliers (name)
+              )
+            )
+          ),
+          contracts (
+            id,
+            item_description,
+            clients (name),
+            suppliers (name)
+          ),
+          expenses (
+            id,
+            title,
+            category
+          )
+        `)
+        .order('created_at', { ascending: false })
+
+      if (filters.type) query = query.eq('type', filters.type)
+      if (filters.category) query = query.eq('category', filters.category)
+      if (filters.date_from) query = query.gte('transaction_date', filters.date_from)
+      if (filters.date_to) query = query.lte('transaction_date', filters.date_to)
+
+      const { data, error } = await query
+      if (error) throw error
+      return data
+    }
+  })
+}
+
+export const useSafeSummary = () => {
+  return useQuery({
+    queryKey: ['safe_summary'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('safe_transactions')
+        .select('type, amount')
+
+      if (error) throw error
+
+      let totalDeposits = 0
+      let totalWithdrawals = 0
+
+      data?.forEach(t => {
+        const amt = parseFloat(t.amount || 0)
+        if (t.type === 'deposit') {
+          totalDeposits += amt
+        } else if (t.type === 'withdrawal') {
+          totalWithdrawals += amt
+        }
+      })
+
+      return {
+        balance: totalDeposits - totalWithdrawals,
+        totalDeposits,
+        totalWithdrawals
+      }
+    }
+  })
+}
+
+export const useCreateManualSafeTransaction = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ type, amount, category, notes, transaction_date }) => {
+      const { data: { user } } = await supabase.auth.getUser()
+      const { data, error } = await supabase
+        .from('safe_transactions')
+        .insert({
+          user_id: user.id,
+          type,
+          amount: parseFloat(amount),
+          category,
+          notes: notes || null,
+          transaction_date: transaction_date || new Date().toISOString().split('T')[0]
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+      return data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['safe_transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['safe_summary'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    }
+  })
+}
+
+export const useExpenses = (filters = {}) => {
+  return useQuery({
+    queryKey: ['expenses', filters],
+    queryFn: async () => {
+      let query = supabase
+        .from('expenses')
+        .select('*')
+        .order('expense_date', { ascending: false })
+
+      if (filters.category) query = query.eq('category', filters.category)
+      if (filters.date_from) query = query.gte('expense_date', filters.date_from)
+      if (filters.date_to) query = query.lte('expense_date', filters.date_to)
+
+      const { data, error } = await query
+      if (error) throw error
+      return data
+    }
+  })
+}
+
+export const useCreateExpense = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ title, amount, category, notes, expense_date }) => {
+      const { data: { user } } = await supabase.auth.getUser()
+      const date = expense_date || new Date().toISOString().split('T')[0]
+      const amt = parseFloat(amount)
+
+      // Insert expense
+      const { data: expense, error: expenseError } = await supabase
+        .from('expenses')
+        .insert({
+          user_id: user.id,
+          title,
+          amount: amt,
+          category,
+          notes: notes || null,
+          expense_date: date
+        })
+        .select()
+        .single()
+
+      if (expenseError) throw expenseError
+
+      // Insert linked safe transaction
+      const { error: safeError } = await supabase
+        .from('safe_transactions')
+        .insert({
+          user_id: user.id,
+          type: 'withdrawal',
+          amount: amt,
+          category: 'expense',
+          expense_id: expense.id,
+          transaction_date: date,
+          notes: `مصروف: ${title}${notes ? ` - ${notes}` : ''}`
+        })
+
+      if (safeError) throw safeError
+
+      return expense
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['expenses'] })
+      queryClient.invalidateQueries({ queryKey: ['safe_transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['safe_summary'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    }
   })
 }
 

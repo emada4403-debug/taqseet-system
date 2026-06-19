@@ -14,6 +14,7 @@ import CalendarPage from '@/pages/Calendar'
 import Reports from '@/pages/Reports'
 import SettingsPage from '@/pages/Settings'
 import Inventory from '@/pages/Inventory'
+import SafeLedger from '@/pages/SafeLedger'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -105,7 +106,11 @@ function AppRoutes() {
         <ProtectedRoute><Inventory /></ProtectedRoute>
       } />
 
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="/safe" element={
+        <ProtectedRoute><SafeLedger /></ProtectedRoute>
+      } />
+
+      <Route path="/*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }

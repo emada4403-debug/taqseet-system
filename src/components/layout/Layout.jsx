@@ -6,7 +6,7 @@ import { isSupabaseConfigured, resetLocalDatabase } from '@/lib/supabase'
 import {
   LayoutDashboard, Users, Store, FileText, Calendar,
   BarChart3, Settings, LogOut, Menu, X, Moon, Sun,
-  TrendingUp, TrendingDown, Bell, Package
+  TrendingUp, TrendingDown, Bell, Package, Wallet
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { to: '/receivables', icon: TrendingUp, label: 'المديونيات', badge: 'receivables' },
   { to: '/payables', icon: TrendingDown, label: 'المستحقات', badge: 'payables' },
   { to: '/inventory', icon: Package, label: 'المخزن' },
+  { to: '/safe', icon: Wallet, label: 'الخزينة والمصروفات' },
   { to: '/contracts/new', icon: FileText, label: 'عقد جديد' },
   { to: '/calendar', icon: Calendar, label: 'التقويم' },
   { to: '/reports', icon: BarChart3, label: 'التقارير' },
