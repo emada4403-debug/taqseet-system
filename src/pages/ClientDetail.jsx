@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
-import { useClient, useSettings } from '@/hooks/useApi'
+import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useClient, useSettings, useUpdateClient, useDeleteClient } from '@/hooks/useApi'
 import {
   formatCurrency, formatDate, calculateContractBalance,
   getContractStatusClass, getContractStatusLabel,
@@ -9,10 +9,13 @@ import {
 } from '@/lib/utils'
 import { PageLoader, ErrorState } from '@/components/ui/States'
 import PaymentModal from '@/components/ui/PaymentModal'
+import Modal from '@/components/ui/Modal'
+import { ClientForm } from '@/pages/Receivables'
+import { useToast } from '@/context/ToastContext'
 import {
   ArrowRight, Phone, MapPin, CreditCard, User,
   ChevronDown, ChevronUp, MessageCircle, ExternalLink,
-  FileText, Calendar, TrendingUp, Plus
+  FileText, Calendar, TrendingUp, Plus, Edit, Trash2
 } from 'lucide-react'
 
 function ContractCard({ contract, symbol, onPay, onWhatsApp }) {
@@ -163,10 +166,17 @@ function ContractCard({ contract, symbol, onPay, onWhatsApp }) {
 
 export default function ClientDetail() {
   const { id } = useParams()
+  const navigate = useNavigate()
+  const toast = useToast()
   const { data: client, isLoading, error, refetch } = useClient(id)
   const { data: settings } = useSettings()
+  const updateClient = useUpdateClient()
+  const deleteClient = useDeleteClient()
+
   const [selectedInstallment, setSelectedInstallment] = useState(null)
   const [whatsappMsg, setWhatsappMsg] = useState(null)
+  const [showEdit, setShowEdit] = useState(false)
+  const [showDelete, setShowDelete] = useState(false)
 
   const symbol = settings?.currency_symbol || 'ج.م'
 
@@ -183,6 +193,28 @@ export default function ClientDetail() {
     window.open(`https://wa.me/${phone}?text=${msg}`, '_blank')
   }
 
+  const handleUpdate = async (formData) => {
+    try {
+      await updateClient.mutateAsync({ id, ...formData })
+      toast.success('تم تحديث بيانات العميل بنجاح')
+      setShowEdit(false)
+      refetch()
+    } catch (err) {
+      toast.error(err.message || 'فشل تحديث البيانات')
+    }
+  }
+
+  const handleDelete = async () => {
+    try {
+      await deleteClient.mutateAsync(id)
+      toast.success('تم حذف العميل بنجاح')
+      setShowDelete(false)
+      navigate('/receivables')
+    } catch (err) {
+      toast.error(err.message || 'فشل حذف العميل')
+    }
+  }
+
   if (isLoading) return <PageLoader />
   if (error) return <ErrorState error={error} onRetry={refetch} />
   if (!client) return null
@@ -197,13 +229,25 @@ export default function ClientDetail() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <Link to="/receivables" className="btn-ghost btn-icon">
-          <ArrowRight size={20} />
-        </Link>
-        <div>
-          <h1 className="text-2xl font-bold text-heading">{client.name}</h1>
-          <p className="text-muted text-sm">سجل العميل والأقساط</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <Link to="/receivables" className="btn-ghost btn-icon">
+            <ArrowRight size={20} />
+          </Link>
+          <div>
+            <h1 className="text-2xl font-bold text-heading">{client.name}</h1>
+            <p className="text-muted text-sm">سجل العميل والأقساط</p>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => setShowEdit(true)} className="btn-secondary">
+            <Edit size={16} />
+            <span>تعديل البيانات</span>
+          </button>
+          <button onClick={() => setShowDelete(true)} className="btn bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 dark:bg-red-950/20 dark:hover:bg-red-900/20 dark:border-red-900/30 dark:text-red-400">
+            <Trash2 size={16} />
+            <span>حذف العميل</span>
+          </button>
         </div>
       </div>
 
@@ -301,6 +345,64 @@ export default function ClientDetail() {
         onClose={() => setSelectedInstallment(null)}
         currencySymbol={symbol}
       />
+
+      {/* Edit Client Modal */}
+      <Modal
+        isOpen={showEdit}
+        onClose={() => setShowEdit(false)}
+        title="تعديل بيانات العميل"
+        footer={
+          <div className="flex gap-3 w-full">
+            <button onClick={() => setShowEdit(false)} className="btn-secondary flex-1">إلغاء</button>
+            <button
+              form="client-form"
+              type="submit"
+              className="btn-primary flex-1"
+              disabled={updateClient.isPending}
+            >
+              {updateClient.isPending ? 'جاري الحفظ...' : 'حفظ التغييرات'}
+            </button>
+          </div>
+        }
+      >
+        <ClientForm 
+          initialData={{
+            name: client.name,
+            phone: client.phone || '',
+            national_id: client.national_id || '',
+            address: client.address || '',
+            notes: client.notes || '',
+          }} 
+          onSubmit={handleUpdate} 
+          loading={updateClient.isPending} 
+        />
+      </Modal>
+
+      {/* Delete Client Modal */}
+      <Modal
+        isOpen={showDelete}
+        onClose={() => setShowDelete(false)}
+        title="حذف العميل"
+        footer={
+          <div className="flex gap-3 w-full">
+            <button onClick={() => setShowDelete(false)} className="btn-secondary flex-1">إلغاء</button>
+            <button
+              onClick={handleDelete}
+              className="btn-danger flex-1"
+              disabled={deleteClient.isPending}
+            >
+              {deleteClient.isPending ? 'جاري الحذف...' : 'تأكيد الحذف'}
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-heading font-medium">هل أنت متأكد من رغبتك في حذف العميل <strong className="text-primary-600">"{client.name}"</strong>؟</p>
+          <p className="text-muted text-sm leading-relaxed">
+            سيؤدي هذا الإجراء إلى نقل العميل للأرشيف وإخفائه من قائمة المديونيات النشطة. لن يتم حذف أي من عقوده أو أقساطه المسجلة.
+          </p>
+        </div>
+      </Modal>
     </div>
   )
 }

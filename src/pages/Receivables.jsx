@@ -7,7 +7,7 @@ import Modal from '@/components/ui/Modal'
 import { useToast } from '@/context/ToastContext'
 import { Users, Plus, Phone, MapPin, ChevronLeft, Search, Edit, Trash2, User } from 'lucide-react'
 
-function ClientForm({ initialData = {}, onSubmit, loading }) {
+export function ClientForm({ initialData = {}, onSubmit, loading }) {
   const [form, setForm] = useState({
     name: initialData.name || '',
     phone: initialData.phone || '',
