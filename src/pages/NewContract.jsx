@@ -17,6 +17,8 @@ export default function NewContract() {
   const toast = useToast()
   const [step, setStep] = useState(0)
   const [purchaseMethod, setPurchaseMethod] = useState('credit') // 'credit' | 'cash'
+  const [purchaseFunding, setPurchaseFunding] = useState('cash') // 'cash' | 'supplier_credit'
+  const [purchaseSupplierId, setPurchaseSupplierId] = useState('')
   const [form, setForm] = useState({
     type: searchParams.get('type') || 'RECEIVABLE',
     client_id: searchParams.get('client') || '',
@@ -35,6 +37,7 @@ export default function NewContract() {
 
   // Calculated values
   const totalPrice = parseFloat(form.total_price) || 0
+  const purchasePrice = form.type === 'RECEIVABLE' ? (parseFloat(form.purchase_price) || 0) : totalPrice
   const downPayment = purchaseMethod === 'cash' ? totalPrice : (parseFloat(form.down_payment) || 0)
   const installmentCount = purchaseMethod === 'cash' ? 0 : (parseInt(form.installment_count) || 1)
   const remaining = purchaseMethod === 'cash' ? 0 : (totalPrice - downPayment)
@@ -57,6 +60,7 @@ export default function NewContract() {
       if (isReceivable && (!form.purchase_price || parseFloat(form.purchase_price) <= 0)) { toast.error('يرجى إدخال سعر الشراء'); return false }
       if (!totalPrice || totalPrice <= 0) { toast.error('يرجى إدخال السعر الإجمالي'); return false }
       if (purchaseMethod === 'credit' && downPayment >= totalPrice) { toast.error('المقدم يجب أن يكون أقل من الإجمالي'); return false }
+      if (isReceivable && purchaseFunding === 'supplier_credit' && !purchaseSupplierId) { toast.error('يرجى اختيار المورد المستحق'); return false }
     }
     return true
   }
@@ -93,6 +97,38 @@ export default function NewContract() {
       }))
 
       const result = await createContract.mutateAsync({ contractData, installments, isCash: purchaseMethod === 'cash' })
+
+      if (isReceivable && purchaseFunding === 'supplier_credit' && purchaseSupplierId) {
+        const clientName = clients?.find(c => c.id === form.client_id)?.name || 'العميل'
+        const supplierContractData = {
+          type: 'PAYABLE',
+          client_id: null,
+          supplier_id: purchaseSupplierId,
+          item_description: `تكلفة شراء بضاعة لـ: ${clientName} - ${form.item_description}`,
+          purchase_price: purchasePrice,
+          total_price: purchasePrice,
+          profit: 0,
+          down_payment: 0,
+          installment_count: 1,
+          installment_amount: purchasePrice,
+          start_date: form.start_date,
+          due_day: 1,
+          notes: `مستحقة شراء آجل مرتبطة بعقد العميل: ${form.item_description}`,
+          status: 'active',
+        }
+
+        const supplierInstallments = [{
+          due_date: form.start_date,
+          amount: purchasePrice,
+        }]
+
+        await createContract.mutateAsync({ 
+          contractData: supplierContractData, 
+          installments: supplierInstallments, 
+          isCash: false 
+        })
+      }
+
       toast.success('تم إنشاء العقد بنجاح ✓')
 
       if (isReceivable) {
@@ -340,6 +376,59 @@ export default function NewContract() {
             )
           )}
 
+          {/* Supplier Purchase Cost Funding (only for Receivables - Client sales) */}
+          {isReceivable && (
+            <>
+              <div className="form-group border-t border-surface-100 dark:border-surface-700 pt-4">
+                <label className="label font-bold text-heading">طريقة دفع تكلفة الشراء للمورد</label>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPurchaseFunding('cash')
+                      setPurchaseSupplierId('')
+                    }}
+                    className={`py-2 px-3 rounded-xl text-xs font-semibold border-2 transition-all ${
+                      purchaseFunding === 'cash'
+                        ? 'border-success-500 bg-success-50 dark:bg-success-950/20 text-success-700 dark:text-success-400'
+                        : 'border-surface-200 dark:border-surface-700 text-muted hover:border-success-300'
+                    }`}
+                  >
+                    شراء نقدي / كاش (مسدد للمورد)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPurchaseFunding('supplier_credit')}
+                    className={`py-2 px-3 rounded-xl text-xs font-semibold border-2 transition-all ${
+                      purchaseFunding === 'supplier_credit'
+                        ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400'
+                        : 'border-surface-200 dark:border-surface-700 text-muted hover:border-success-300'
+                    }`}
+                  >
+                    شراء آجل (دين على الحساب لمورد)
+                  </button>
+                </div>
+              </div>
+
+              {purchaseFunding === 'supplier_credit' && (
+                <div className="form-group">
+                  <label className="label">اختر المورد المستحق له تكلفة الشراء *</label>
+                  <select
+                    className="input"
+                    value={purchaseSupplierId}
+                    onChange={e => setPurchaseSupplierId(e.target.value)}
+                    required
+                  >
+                    <option value="">-- اختر المورد --</option>
+                    {suppliers?.map(s => (
+                      <option key={s.id} value={s.id}>{s.name} {s.company ? `(${s.company})` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </>
+          )}
+
           {/* Conditional Installment Options */}
           {purchaseMethod === 'credit' && (
             <div className="grid grid-cols-2 gap-3">
@@ -409,7 +498,13 @@ export default function NewContract() {
                   ? (purchaseMethod === 'cash' ? '📥 بيع نقدي (كاش)' : '📥 مديونية تقسيط (عميل)') 
                   : (purchaseMethod === 'cash' ? '📤 شراء نقدي (كاش)' : '📤 مستحقة تقسيط (مورد)') },
                 { label: 'البضاعة', value: form.item_description },
-                { label: 'القيمة المالية', value: formatCurrency(totalPrice, symbol) },
+                { label: 'سعر البيع الإجمالي', value: formatCurrency(totalPrice, symbol) },
+                ...(isReceivable ? [
+                  { label: 'سعر الشراء (التكلفة)', value: formatCurrency(purchasePrice, symbol) },
+                  { label: 'طريقة دفع التكلفة للمورد', value: purchaseFunding === 'supplier_credit' 
+                    ? `آجل (على المورد: ${suppliers?.find(s => s.id === purchaseSupplierId)?.name || 'غير محدد'})`
+                    : 'نقداً / كاش (مسدد)' }
+                ] : []),
                 ...(purchaseMethod === 'credit' ? [
                   { label: 'المقدم', value: formatCurrency(downPayment, symbol) },
                   { label: 'عدد الأقساط', value: `${installmentCount} قسط` },
