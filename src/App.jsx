@@ -18,7 +18,7 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
-      staleTime: 1000 * 60 * 2, // 2 minutes
+      staleTime: 0, // stale immediately to trigger background updates on navigation
     },
   },
 })

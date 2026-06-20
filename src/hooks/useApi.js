@@ -103,7 +103,6 @@ export const useDashboard = () => {
         collectionRate,
       }
     },
-    staleTime: 1000 * 60 * 5, // 5 minutes
   })
 }
 
@@ -174,6 +173,7 @@ export const useCreateClient = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clients'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     },
   })
 }
@@ -194,6 +194,7 @@ export const useUpdateClient = () => {
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ['clients'] })
       queryClient.invalidateQueries({ queryKey: ['clients', vars.id] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     },
   })
 }
@@ -210,6 +211,7 @@ export const useDeleteClient = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['clients'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     },
   })
 }
@@ -281,6 +283,7 @@ export const useCreateSupplier = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['suppliers'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     },
   })
 }
@@ -301,6 +304,7 @@ export const useUpdateSupplier = () => {
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ['suppliers'] })
       queryClient.invalidateQueries({ queryKey: ['suppliers', vars.id] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     },
   })
 }
@@ -596,7 +600,11 @@ export const useRecordPayment = () => {
       return { success: true, isPaid: isPaidCurrent, newRemaining: newRemainingCurrent }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries()
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['contracts'] })
+      queryClient.invalidateQueries({ queryKey: ['clients'] })
+      queryClient.invalidateQueries({ queryKey: ['suppliers'] })
+      queryClient.invalidateQueries({ queryKey: ['installments'] })
     },
   })
 }
@@ -687,6 +695,7 @@ export const useUpdateSettings = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
     },
   })
 }
