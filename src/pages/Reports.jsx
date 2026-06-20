@@ -44,10 +44,60 @@ const AGING_COLORS = {
   '90+': 'border-red-700 bg-red-50 dark:bg-red-900/20',
 }
 
+function getPresetDates(preset) {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = now.getMonth()
+
+  let fromDate = new Date()
+  let toDate = new Date()
+
+  if (preset === 'this_month') {
+    fromDate = new Date(year, month, 1)
+    toDate = new Date(year, month + 1, 0)
+  } else if (preset === 'last_month') {
+    fromDate = new Date(year, month - 1, 1)
+    toDate = new Date(year, month, 0)
+  } else if (preset === 'this_quarter') {
+    const quarterStartMonth = Math.floor(month / 3) * 3
+    fromDate = new Date(year, quarterStartMonth, 1)
+    toDate = new Date(year, quarterStartMonth + 3, 0)
+  } else if (preset === 'this_year') {
+    fromDate = new Date(year, 0, 1)
+    toDate = new Date(year, 11, 31)
+  } else {
+    fromDate = new Date(2020, 0, 1)
+    toDate = new Date(2035, 11, 31)
+  }
+
+  const format = (d) => {
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const r = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${r}`
+  }
+  return { from: format(fromDate), to: format(toDate) }
+}
+
 export default function Reports() {
   const [activeTab, setActiveTab] = useState('profits')
   const { data: settings } = useSettings()
   const symbol = settings?.currency_symbol || 'ج.م'
+
+  // P&L Period & Accounting Basis States
+  const [pnlPreset, setPnlPreset] = useState('this_month')
+  const [accountingBasis, setAccountingBasis] = useState('accrual')
+  const [pnlDateFrom, setPnlDateFrom] = useState(() => getPresetDates('this_month').from)
+  const [pnlDateTo, setPnlDateTo] = useState(() => getPresetDates('this_month').to)
+
+  const handlePresetChange = (preset) => {
+    setPnlPreset(preset)
+    if (preset !== 'custom') {
+      const dates = getPresetDates(preset)
+      setPnlDateFrom(dates.from)
+      setPnlDateTo(dates.to)
+    }
+  }
 
   // Common Queries
   const { data: clients, isLoading: isClientsLoading, error: clientsErr } = useClients()
@@ -76,23 +126,104 @@ export default function Reports() {
     return <ErrorState error={clientsErr || suppliersErr} />
   }
 
-  // --- Calculations for Profits Report ---
-  const receivableContracts = allContracts?.filter(c => c.type === 'RECEIVABLE') || []
-  let totalSales = 0
-  let totalCost = 0
-  let totalExpectedProfit = 0
-  let totalCollectedProfit = 0
+  // Helper to check if a date is within the selected period
+  const isWithinPeriod = (dateStr) => {
+    if (!dateStr) return false
+    return dateStr >= pnlDateFrom && dateStr <= pnlDateTo
+  }
 
-  const profitRows = receivableContracts.map(contract => {
+  // --- Expenses for the Selected Period ---
+  const periodExpenses = expenses?.filter(e => isWithinPeriod(e.expense_date)) || []
+  const totalGeneralExpenses = periodExpenses.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0) || 0
+
+  const categorySums = { rent: 0, electricity: 0, salaries: 0, marketing: 0, maintenance: 0, other: 0 }
+  periodExpenses.forEach(e => {
+    const cat = e.category || 'other'
+    if (categorySums[cat] !== undefined) {
+      categorySums[cat] += parseFloat(e.amount || 0)
+    } else {
+      categorySums.other += parseFloat(e.amount || 0)
+    }
+  })
+
+  // --- Accrual Basis P&L Calculations ---
+  const periodContracts = allContracts?.filter(c => isWithinPeriod(c.start_date)) || []
+  const receivablePeriodContracts = periodContracts.filter(c => c.type === 'RECEIVABLE')
+
+  let accrualRevenueInstallment = 0
+  let accrualRevenueCash = 0
+  let accrualCogsInstallment = 0
+  let accrualCogsCash = 0
+
+  receivablePeriodContracts.forEach(c => {
+    const isCash = c.installment_count === 0
+    const total = parseFloat(c.total_price || 0)
+    const cost = parseFloat(c.purchase_price || 0)
+
+    if (isCash) {
+      accrualRevenueCash += total
+      accrualCogsCash += cost
+    } else {
+      accrualRevenueInstallment += total
+      accrualCogsInstallment += cost
+    }
+  })
+
+  const accrualRevenueTotal = accrualRevenueInstallment + accrualRevenueCash
+  const accrualCogsTotal = accrualCogsInstallment + accrualCogsCash
+  const accrualGrossProfit = accrualRevenueTotal - accrualCogsTotal
+  const accrualNetProfit = accrualGrossProfit - totalGeneralExpenses
+
+  // --- Cash Basis P&L Calculations ---
+  // 1. Cash Revenue Collected in the Period
+  // Down payments received in the period
+  const cashRevenueDownPayments = allContracts?.filter(c => c.type === 'RECEIVABLE' && isWithinPeriod(c.start_date))
+    .reduce((sum, c) => sum + parseFloat(c.down_payment || 0), 0) || 0
+
+  // Installment payments received in the period
+  let cashRevenueInstallmentPayments = 0
+  allContracts?.forEach(c => {
+    if (c.type === 'RECEIVABLE') {
+      c.installments?.forEach(inst => {
+        inst.payments?.forEach(pay => {
+          if (isWithinPeriod(pay.payment_date)) {
+            cashRevenueInstallmentPayments += parseFloat(pay.amount || 0)
+          }
+        })
+      })
+    }
+  })
+
+  const cashRevenueTotal = cashRevenueDownPayments + cashRevenueInstallmentPayments
+
+  // 2. Cash Cost (COGS) Paid in the Period (to suppliers)
+  // Down payments paid to suppliers in the period
+  const cashCogsDownPayments = allContracts?.filter(c => c.type === 'PAYABLE' && isWithinPeriod(c.start_date))
+    .reduce((sum, c) => sum + parseFloat(c.down_payment || 0), 0) || 0
+
+  // Installment payments paid to suppliers in the period
+  let cashCogsInstallmentPayments = 0
+  allContracts?.forEach(c => {
+    if (c.type === 'PAYABLE') {
+      c.installments?.forEach(inst => {
+        inst.payments?.forEach(pay => {
+          if (isWithinPeriod(pay.payment_date)) {
+            cashCogsInstallmentPayments += parseFloat(pay.amount || 0)
+          }
+        })
+      })
+    }
+  })
+
+  const cashCogsTotal = cashCogsDownPayments + cashCogsInstallmentPayments
+  const cashGrossProfit = cashRevenueTotal - cashCogsTotal
+  const cashNetProfit = cashGrossProfit - totalGeneralExpenses
+
+  // --- Profit Rows for Table (Accrual details of contracts in period) ---
+  const profitRows = receivablePeriodContracts.map(contract => {
     const total = parseFloat(contract.total_price || 0)
-    totalSales += total
-    
-    // Use manual purchase price and profit from contract
     const cost = parseFloat(contract.purchase_price || 0)
-    totalCost += cost
-
     const expectedProfit = parseFloat(contract.profit || (total - cost))
-    totalExpectedProfit += expectedProfit
 
     // Calculate paid amount
     const totalPaid = contract.installments?.reduce((sum, inst) => {
@@ -101,14 +232,12 @@ export default function Reports() {
       return sum + (amt - rem)
     }, 0) || 0
 
-    // Down payment is also paid
     const dp = parseFloat(contract.down_payment || 0)
     const paidWithDp = totalPaid + dp
 
     // Collected profit ratio
     const paidRatio = total > 0 ? paidWithDp / total : 0
     const collectedProfit = expectedProfit * paidRatio
-    totalCollectedProfit += collectedProfit
 
     return {
       contract,
@@ -119,19 +248,18 @@ export default function Reports() {
     }
   })
 
-  const totalGeneralExpenses = expenses?.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0) || 0
-  const netCollectedProfit = totalCollectedProfit - totalGeneralExpenses
+  // Final summary stats based on active accounting basis
+  const displayRevenue = accountingBasis === 'accrual' ? accrualRevenueTotal : cashRevenueTotal
+  const displayCOGS = accountingBasis === 'accrual' ? accrualCogsTotal : cashCogsTotal
+  const displayGrossProfit = accountingBasis === 'accrual' ? accrualGrossProfit : cashGrossProfit
+  const displayNetProfit = accountingBasis === 'accrual' ? accrualNetProfit : cashNetProfit
 
-  // --- Calculations for Expenses Report ---
-  const categorySums = { rent: 0, electricity: 0, salaries: 0, marketing: 0, maintenance: 0, other: 0 }
-  expenses?.forEach(e => {
-    const cat = e.category || 'other'
-    if (categorySums[cat] !== undefined) {
-      categorySums[cat] += parseFloat(e.amount || 0)
-    } else {
-      categorySums.other += parseFloat(e.amount || 0)
-    }
-  })
+  // Margins
+  const grossMarginPct = displayRevenue > 0 ? (displayGrossProfit / displayRevenue) * 100 : 0
+  const netMarginPct = displayRevenue > 0 ? (displayNetProfit / displayRevenue) * 100 : 0
+  const opexRatioPct = displayRevenue > 0 ? (totalGeneralExpenses / displayRevenue) * 100 : 0
+
+  const receivableContracts = allContracts?.filter(c => c.type === 'RECEIVABLE') || []
 
   // --- Calculations for Aging Report ---
   const agingBuckets = { '1-30': [], '31-60': [], '61-90': [], '90+': [] }
@@ -156,29 +284,39 @@ export default function Reports() {
   // Excel Export functions
   const handleExportProfitsExcel = () => {
     const rows = [
-      ['تاريخ العقد', 'العميل', 'البضاعة', 'قيمة البيع (قسط)', 'قيمة الشراء (التكلفة)', 'الربح المتوقع', 'المسدد الفعلي', 'الربح المحصل الفعلي'],
-      ...profitRows.map(r => [
-        r.contract.start_date,
-        r.contract.clients?.name || 'غير معروف',
-        r.contract.item_description,
-        parseFloat(r.contract.total_price),
-        r.cost,
-        r.expectedProfit,
-        r.paidWithDp,
-        r.collectedProfit
-      ]),
+      ['بيان الأرباح والخسائر (قائمة الدخل) - ' + (accountingBasis === 'accrual' ? 'أساس الاستحقاق' : 'الأساس النقدي')],
+      ['الفترة الزمنية', `${pnlDateFrom} إلى ${pnlDateTo}`],
       [],
-      ['إجمالي المبيعات القسط', totalSales],
-      ['إجمالي تكلفة الشراء', totalCost],
-      ['إجمالي الأرباح المتوقعة', totalExpectedProfit],
-      ['إجمالي الأرباح المحصلة فعلياً', totalCollectedProfit],
-      ['إجمالي المصاريف العامة', totalGeneralExpenses],
-      ['صافي الأرباح المحصلة', netCollectedProfit]
+      ['البند المحاسبي', 'القيمة بالعملة (' + symbol + ')'],
+      ['الإيرادات التشغيلية (Revenue)'],
+      ['  مبيعات التقسيط', accountingBasis === 'accrual' ? accrualRevenueInstallment : cashRevenueInstallmentPayments],
+      ['  المبيعات النقدية', accountingBasis === 'accrual' ? accrualRevenueCash : cashRevenueDownPayments],
+      ['إجمالي الإيرادات', displayRevenue],
+      [],
+      ['تكلفة المبيعات (Cost of Goods Sold - COGS)'],
+      ['  تكلفة أجهزة التقسيط', accountingBasis === 'accrual' ? accrualCogsInstallment : cashCogsInstallmentPayments],
+      ['  تكلفة أجهزة الكاش', accountingBasis === 'accrual' ? accrualCogsCash : cashCogsDownPayments],
+      ['إجمالي تكلفة المبيعات', displayCOGS],
+      [],
+      ['مجمل الربح (Gross Profit)', displayGrossProfit],
+      ['هامش مجمل الربح (%)', grossMarginPct.toFixed(1) + '%'],
+      [],
+      ['المصروفات التشغيلية والعمومية (Operating Expenses - OPEX)'],
+      ['  إيجار', categorySums.rent],
+      ['  كهرباء ومياه', categorySums.electricity],
+      ['  رواتب وأجور', categorySums.salaries],
+      ['  تسويق ودعاية', categorySums.marketing],
+      ['  صيانة وإصلاحات', categorySums.maintenance],
+      ['  مصاريف أخرى', categorySums.other],
+      ['إجمالي المصروفات التشغيلية', totalGeneralExpenses],
+      [],
+      ['صافي الأرباح المحصلة (Net Profit)', displayNetProfit],
+      ['هامش صافي الربح (%)', netMarginPct.toFixed(1) + '%'],
     ]
     const ws = XLSX.utils.aoa_to_sheet(rows)
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'تقرير الأرباح')
-    XLSX.writeFile(wb, 'profits_report.xlsx')
+    XLSX.utils.book_append_sheet(wb, ws, 'قائمة الدخل')
+    XLSX.writeFile(wb, 'profits_losses_report.xlsx')
   }
 
   const handleExportClientReceivablesExcel = () => {
@@ -317,74 +455,245 @@ export default function Reports() {
       {activeTab === 'profits' && (
         <div className="space-y-6 no-print">
           <div className="flex justify-between items-center">
-            <h2 className="text-lg font-bold text-heading">تحليل الأرباح التفصيلي</h2>
+            <h2 className="text-lg font-bold text-heading">تحليل الأرباح والخسائر (قائمة الدخل)</h2>
             <button onClick={handleExportProfitsExcel} className="btn-secondary btn-sm flex items-center gap-1">
               <FileSpreadsheet size={14} />
               <span>تصدير Excel</span>
             </button>
           </div>
 
-          {/* Cards summary */}
-          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-            <div className="card p-4">
-              <span className="text-xs text-muted block">إجمالي مبيعات التقسيط</span>
-              <span className="text-2xl font-bold text-heading block mt-1">{formatCurrency(totalSales, symbol)}</span>
+          {/* Period controls & Basis Selector */}
+          <div className="card p-5 grid sm:grid-cols-2 gap-4 border border-surface-200 dark:border-surface-700 shadow-sm">
+            {/* Period selector */}
+            <div className="space-y-3">
+              <h3 className="font-bold text-heading text-xs">الفترة الزمنية للتقرير</h3>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { id: 'this_month', label: 'هذا الشهر' },
+                  { id: 'last_month', label: 'الشهر السابق' },
+                  { id: 'this_quarter', label: 'الربع الحالي' },
+                  { id: 'this_year', label: 'العام الحالي' },
+                  { id: 'all', label: 'الكل' },
+                ].map(preset => (
+                  <button
+                    key={preset.id}
+                    onClick={() => handlePresetChange(preset.id)}
+                    className={`py-1 px-3 rounded-lg text-[10px] font-bold border transition-all ${
+                      pnlPreset === preset.id
+                        ? 'bg-primary-600 text-white border-primary-600 shadow-sm'
+                        : 'border-surface-200 dark:border-surface-700 text-muted hover:border-primary-300'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <div>
+                  <label className="text-[10px] text-muted block mb-1">من تاريخ</label>
+                  <input
+                    type="date"
+                    className="input text-xs py-1.5"
+                    value={pnlDateFrom}
+                    onChange={e => {
+                      setPnlDateFrom(e.target.value)
+                      setPnlPreset('custom')
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted block mb-1">إلى تاريخ</label>
+                  <input
+                    type="date"
+                    className="input text-xs py-1.5"
+                    value={pnlDateTo}
+                    onChange={e => {
+                      setPnlDateTo(e.target.value)
+                      setPnlPreset('custom')
+                    }}
+                  />
+                </div>
+              </div>
             </div>
-            <div className="card p-4">
-              <span className="text-xs text-muted block">تكلفة شراء الأجهزة المباعة</span>
-              <span className="text-2xl font-bold text-slate-600 block mt-1">{formatCurrency(totalCost, symbol)}</span>
+
+            {/* Accounting Basis Selection */}
+            <div className="space-y-3 sm:border-r sm:border-surface-150 dark:sm:border-surface-700 sm:pr-4">
+              <h3 className="font-bold text-heading text-xs">طريقة احتساب الإيرادات (الأساس المحاسبي)</h3>
+              <div className="grid grid-cols-2 gap-2 bg-surface-100 dark:bg-surface-800 p-1 rounded-xl">
+                <button
+                  onClick={() => setAccountingBasis('accrual')}
+                  className={`py-2 px-3 rounded-lg text-[10px] font-bold transition-all ${
+                    accountingBasis === 'accrual'
+                      ? 'bg-white dark:bg-surface-700 text-primary-600 shadow-sm'
+                      : 'text-muted hover:text-heading'
+                  }`}
+                >
+                  أساس الاستحقاق (أرباح العقود كاملة)
+                </button>
+                <button
+                  onClick={() => setAccountingBasis('cash')}
+                  className={`py-2 px-3 rounded-lg text-[10px] font-bold transition-all ${
+                    accountingBasis === 'cash'
+                      ? 'bg-white dark:bg-surface-700 text-primary-600 shadow-sm'
+                      : 'text-muted hover:text-heading'
+                  }`}
+                >
+                  الأساس النقدي (الأرباح المحصلة فعلياً)
+                </button>
+              </div>
+              <p className="text-[10px] text-muted leading-relaxed">
+                {accountingBasis === 'accrual'
+                  ? '• أساس الاستحقاق: يسجل إجمالي قيمة الفواتير والتكاليف كاملة فور إبرام العقد في الفترة المحددة.'
+                  : '• الأساس النقدي: يسجل التدفقات النقدية الفعلية فقط (المقدمات + الأقساط المحصلة) مطروحاً منها التكاليف النقدية المدفوعة.'
+                }
+              </p>
             </div>
-            <div className="card p-4">
-              <span className="text-xs text-muted block">الأرباح الإجمالية المتوقعة</span>
-              <span className="text-2xl font-bold text-primary-600 block mt-1">{formatCurrency(totalExpectedProfit, symbol)}</span>
+          </div>
+
+          {/* Margins & KPI cards */}
+          <div className="grid grid-cols-3 gap-4">
+            <div className="card p-4 border-r-4 border-primary-500">
+              <span className="text-xs text-muted block">هامش مجمل الربح (Gross Margin)</span>
+              <span className="text-xl font-extrabold text-heading block mt-1">{grossMarginPct.toFixed(1)}%</span>
             </div>
-            <div className="card p-4">
-              <span className="text-xs text-muted block">الأرباح المحصلة فعلياً</span>
-              <span className="text-2xl font-bold text-success-600 block mt-1">{formatCurrency(totalCollectedProfit, symbol)}</span>
+            <div className="card p-4 border-r-4 border-danger-500">
+              <span className="text-xs text-muted block">نسبة المصاريف التشغيلية (OPEX Ratio)</span>
+              <span className="text-xl font-extrabold text-danger-600 block mt-1">{opexRatioPct.toFixed(1)}%</span>
             </div>
-            <div className="card p-4">
-              <span className="text-xs text-muted block">المصروفات العامة والتشغيلية</span>
-              <span className="text-2xl font-bold text-danger-600 block mt-1">{formatCurrency(totalGeneralExpenses, symbol)}</span>
-            </div>
-            <div className="card p-4 bg-gradient-to-br from-primary-500/10 to-transparent border-primary-300">
-              <span className="text-xs text-primary-700 dark:text-primary-400 font-bold block">صافي الأرباح المحصلة</span>
-              <span className={`text-2xl font-extrabold block mt-1 ${netCollectedProfit >= 0 ? 'text-green-600' : 'text-danger-600'}`}>
-                {formatCurrency(netCollectedProfit, symbol)}
+            <div className="card p-4 border-r-4 border-success-500">
+              <span className="text-xs text-muted block">صافي هامش الربح (Net Margin)</span>
+              <span className={`text-xl font-extrabold block mt-1 ${displayNetProfit >= 0 ? 'text-success-600' : 'text-danger-600'}`}>
+                {netMarginPct.toFixed(1)}%
               </span>
             </div>
           </div>
 
-          {/* مخطط هيكل الإيرادات والتكاليف والمصاريف */}
+          {/* Structured corporate P&L Statement */}
+          <div className="card p-6 space-y-4 shadow-sm border border-surface-200 dark:border-surface-700">
+            <h3 className="font-extrabold text-heading text-base text-center bg-surface-50 dark:bg-surface-800/40 py-2 rounded-xl border border-surface-200/50">
+              بيان الأرباح والخسائر (قائمة الدخل)
+            </h3>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-right border-collapse">
+                <tbody>
+                  {/* Category 1: Revenue */}
+                  <tr className="border-b border-surface-200 dark:border-surface-700 font-bold bg-surface-50/50">
+                    <td className="py-2.5 px-3 text-heading text-base" colSpan="2">أولاً: الإيرادات التشغيلية (Revenue)</td>
+                  </tr>
+                  <tr className="border-b border-surface-100 dark:border-surface-750">
+                    <td className="py-2 px-6 text-muted">إيرادات المبيعات بالتقسيط (أقساط الفترة)</td>
+                    <td className="py-2 px-3 font-mono font-medium text-left">
+                      {formatCurrency(accountingBasis === 'accrual' ? accrualRevenueInstallment : cashRevenueInstallmentPayments, symbol)}
+                    </td>
+                  </tr>
+                  <tr className="border-b border-surface-100 dark:border-surface-750">
+                    <td className="py-2 px-6 text-muted">إيرادات المبيعات النقدية (مقدمات كاش)</td>
+                    <td className="py-2 px-3 font-mono font-medium text-left">
+                      {formatCurrency(accountingBasis === 'accrual' ? accrualRevenueCash : cashRevenueDownPayments, symbol)}
+                    </td>
+                  </tr>
+                  <tr className="border-b border-surface-200 dark:border-surface-700 font-extrabold text-heading bg-primary-50/10">
+                    <td className="py-2.5 px-3">إجمالي الإيرادات التشغيلية</td>
+                    <td className="py-2.5 px-3 font-mono text-left text-base text-primary-600">
+                      {formatCurrency(displayRevenue, symbol)}
+                    </td>
+                  </tr>
+
+                  {/* Category 2: COGS */}
+                  <tr className="border-b border-surface-200 dark:border-surface-700 font-bold bg-surface-50/50 mt-4">
+                    <td className="py-2.5 px-3 text-heading text-base" colSpan="2">ثانياً: تكلفة المبيعات (Cost of Goods Sold - COGS)</td>
+                  </tr>
+                  <tr className="border-b border-surface-100 dark:border-surface-750">
+                    <td className="py-2 px-6 text-muted">تكلفة الأجهزة المباعة تقسيط</td>
+                    <td className="py-2 px-3 font-mono font-medium text-left">
+                      {formatCurrency(accountingBasis === 'accrual' ? accrualCogsInstallment : cashCogsInstallmentPayments, symbol)}
+                    </td>
+                  </tr>
+                  <tr className="border-b border-surface-100 dark:border-surface-750">
+                    <td className="py-2 px-6 text-muted">تكلفة الأجهزة المباعة كاش / فوري</td>
+                    <td className="py-2 px-3 font-mono font-medium text-left">
+                      {formatCurrency(accountingBasis === 'accrual' ? accrualCogsCash : cashCogsDownPayments, symbol)}
+                    </td>
+                  </tr>
+                  <tr className="border-b border-surface-200 dark:border-surface-700 font-extrabold text-heading bg-slate-50/10">
+                    <td className="py-2.5 px-3">إجمالي تكلفة المبيعات</td>
+                    <td className="py-2.5 px-3 font-mono text-left text-base text-slate-700 dark:text-slate-300">
+                      {formatCurrency(displayCOGS, symbol)}
+                    </td>
+                  </tr>
+
+                  {/* Category 3: Gross Profit */}
+                  <tr className="border-b-2 border-surface-300 dark:border-surface-600 font-extrabold text-heading bg-gradient-to-r from-primary-50/5 to-transparent">
+                    <td className="py-3 px-3 text-base text-primary-700 dark:text-primary-400">مجمل الربح (Gross Profit)</td>
+                    <td className="py-3 px-3 font-mono text-left text-lg text-primary-700 dark:text-primary-400">
+                      {formatCurrency(displayGrossProfit, symbol)}
+                    </td>
+                  </tr>
+
+                  {/* Category 4: OPEX */}
+                  <tr className="border-b border-surface-200 dark:border-surface-700 font-bold bg-surface-50/50">
+                    <td className="py-2.5 px-3 text-heading text-base" colSpan="2">ثالثاً: المصاريف التشغيلية والإدارية (OPEX)</td>
+                  </tr>
+                  {Object.entries(EXPENSE_CATEGORIES).map(([key, label]) => (
+                    <tr key={key} className="border-b border-surface-100 dark:border-surface-750">
+                      <td className="py-2 px-6 text-muted">{label}</td>
+                      <td className="py-2 px-3 font-mono text-left text-danger-600">
+                        {categorySums[key] > 0 ? formatCurrency(categorySums[key], symbol) : '-'}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="border-b border-surface-200 dark:border-surface-700 font-extrabold text-heading bg-red-50/10">
+                    <td className="py-2.5 px-3">إجمالي المصاريف التشغيلية</td>
+                    <td className="py-2.5 px-3 font-mono text-left text-base text-danger-600">
+                      {formatCurrency(totalGeneralExpenses, symbol)}
+                    </td>
+                  </tr>
+
+                  {/* Category 5: Net Profit */}
+                  <tr className="border-b-2 border-surface-400 dark:border-surface-500 font-extrabold bg-gradient-to-r from-success-50/10 to-transparent">
+                    <td className="py-3.5 px-3 text-lg text-heading">صافي الربح / الخسارة (Net Income)</td>
+                    <td className={`py-3.5 px-3 font-mono text-left text-xl ${displayNetProfit >= 0 ? 'text-success-600 dark:text-success-400' : 'text-danger-600 dark:text-danger-400'}`}>
+                      {formatCurrency(displayNetProfit, symbol)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Financial Relative Structure Progress bars */}
           <div className="card p-5 space-y-4 border border-surface-200 dark:border-surface-700 shadow-sm">
-            <h3 className="font-bold text-heading text-sm">مخطط هيكل الإيرادات والتكاليف والمصاريف</h3>
+            <h3 className="font-bold text-heading text-sm">الهيكل المالي النسبي للتقرير</h3>
             <div className="space-y-3">
               <div className="space-y-1">
                 <div className="flex justify-between text-xs text-muted">
-                  <span>تكلفة الشراء (التكلفة) من إجمالي المبيعات</span>
-                  <span className="font-bold text-heading">{totalSales > 0 ? ((totalCost / totalSales) * 100).toFixed(0) : 0}%</span>
+                  <span>نسبة تكلفة الشراء (COGS) من الإيرادات</span>
+                  <span className="font-bold text-heading">{displayRevenue > 0 ? ((displayCOGS / displayRevenue) * 100).toFixed(0) : 0}%</span>
                 </div>
                 <div className="h-2.5 bg-surface-100 dark:bg-surface-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-slate-500 rounded-full" style={{ width: `${totalSales > 0 ? (totalCost / totalSales) * 100 : 0}%` }} />
+                  <div className="h-full bg-slate-500 rounded-full" style={{ width: `${displayRevenue > 0 ? (displayCOGS / displayRevenue) * 100 : 0}%` }} />
                 </div>
               </div>
               
               <div className="space-y-1">
                 <div className="flex justify-between text-xs text-muted">
-                  <span>هامش الربح المتوقع من إجمالي المبيعات</span>
-                  <span className="font-bold text-heading">{totalSales > 0 ? ((totalExpectedProfit / totalSales) * 100).toFixed(0) : 0}%</span>
+                  <span>هامش مجمل الربح (Gross Profit Margin)</span>
+                  <span className="font-bold text-heading">{displayRevenue > 0 ? ((displayGrossProfit / displayRevenue) * 100).toFixed(0) : 0}%</span>
                 </div>
                 <div className="h-2.5 bg-surface-100 dark:bg-surface-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-primary-500 rounded-full" style={{ width: `${totalSales > 0 ? (totalExpectedProfit / totalSales) * 100 : 0}%` }} />
+                  <div className="h-full bg-primary-500 rounded-full" style={{ width: `${displayRevenue > 0 ? (displayGrossProfit / displayRevenue) * 100 : 0}%` }} />
                 </div>
               </div>
 
               <div className="space-y-1">
                 <div className="flex justify-between text-xs text-muted">
-                  <span>المصاريف التشغيلية مقارنة بالأرباح المتوقعة</span>
-                  <span className="font-bold text-heading">{totalExpectedProfit > 0 ? Math.min(100, (totalGeneralExpenses / totalExpectedProfit) * 100).toFixed(0) : 0}%</span>
+                  <span>نسبة المصاريف التشغيلية (OPEX) من الإيرادات</span>
+                  <span className="font-bold text-heading">{displayRevenue > 0 ? ((totalGeneralExpenses / displayRevenue) * 100).toFixed(0) : 0}%</span>
                 </div>
                 <div className="h-2.5 bg-surface-100 dark:bg-surface-700 rounded-full overflow-hidden">
-                  <div className="h-full bg-red-500 rounded-full" style={{ width: `${totalExpectedProfit > 0 ? Math.min(100, (totalGeneralExpenses / totalExpectedProfit) * 100) : 0}%` }} />
+                  <div className="h-full bg-red-500 rounded-full" style={{ width: `${displayRevenue > 0 ? (totalGeneralExpenses / displayRevenue) * 100 : 0}%` }} />
                 </div>
               </div>
             </div>
@@ -392,39 +701,44 @@ export default function Reports() {
 
           {/* Profits Table */}
           <div className="card overflow-hidden">
-            <div className="p-4 border-b border-surface-200 dark:border-surface-700">
-              <h3 className="font-bold text-heading text-sm">تفصيل أرباح العقود النشطة</h3>
+            <div className="p-4 border-b border-surface-200 dark:border-surface-700 bg-surface-50">
+              <h3 className="font-bold text-heading text-sm">تفصيل أرباح العقود المبرمة خلال الفترة</h3>
             </div>
             <div className="overflow-x-auto">
               <table className="table text-right text-xs">
                 <thead>
                   <tr className="bg-surface-50 dark:bg-surface-800">
-                    <th className="p-3">العقد / السلعة</th>
+                    <th className="p-3">تاريخ الفاتورة</th>
+                    <th className="p-3">الفاتورة / السلعة</th>
                     <th className="p-3">العميل</th>
                     <th className="p-3">سعر البيع</th>
                     <th className="p-3">سعر الشراء</th>
                     <th className="p-3">الربح المتوقع</th>
                     <th className="p-3">المحصل فعلياً</th>
-                    <th className="p-3">نسبة السداد</th>
                     <th className="p-3">الربح المحصل</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-100 dark:divide-surface-700">
-                  {profitRows.map(({ contract, cost, expectedProfit, paidWithDp, collectedProfit }) => {
-                    const ratio = contract.total_price > 0 ? (paidWithDp / contract.total_price) * 100 : 0
-                    return (
+                  {profitRows.length === 0 ? (
+                    <tr>
+                      <td colSpan="8" className="p-8 text-center text-muted text-sm">
+                        لا توجد فواتير مبيعات مسجلة في هذه الفترة المحددة.
+                      </td>
+                    </tr>
+                  ) : (
+                    profitRows.map(({ contract, cost, expectedProfit, paidWithDp, collectedProfit }) => (
                       <tr key={contract.id} className="hover:bg-surface-50/50">
+                        <td className="p-3 whitespace-nowrap">{formatDate(contract.start_date)}</td>
                         <td className="p-3 font-semibold text-heading">{contract.item_description}</td>
-                        <td className="p-3 text-muted">{contract.clients?.name}</td>
+                        <td className="p-3 text-muted">{contract.clients?.name || 'مشتري نقدي'}</td>
                         <td className="p-3 font-medium">{formatCurrency(contract.total_price, symbol)}</td>
-                        <td className="p-3 text-slate-500">{cost > 0 ? formatCurrency(cost, symbol) : 'إدخال يدوي / -'}</td>
+                        <td className="p-3 text-slate-500">{cost > 0 ? formatCurrency(cost, symbol) : '-'}</td>
                         <td className="p-3 font-medium text-primary-600">{formatCurrency(expectedProfit, symbol)}</td>
                         <td className="p-3 text-success-600">{formatCurrency(paidWithDp, symbol)}</td>
-                        <td className="p-3 font-mono text-[10px]">{ratio.toFixed(0)}%</td>
                         <td className="p-3 font-bold text-success-700">{formatCurrency(collectedProfit, symbol)}</td>
                       </tr>
-                    )
-                  })}
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -757,64 +1071,145 @@ export default function Reports() {
         {/* 1. Print Profits */}
         {activeTab === 'profits' && (
           <div className="space-y-6">
-            <h2 className="text-center text-lg font-bold py-2 bg-slate-100 rounded-lg">بيان الأرباح والخسائر السنوي والشهري</h2>
+            <h2 className="text-center text-lg font-bold py-2 bg-slate-100 rounded-lg">
+              بيان الأرباح والخسائر (قائمة الدخل) - {accountingBasis === 'accrual' ? 'أساس الاستحقاق' : 'الأساس النقدي'}
+            </h2>
+            <div className="text-center text-xs text-slate-500 mb-4">
+              الفترة: من {formatDate(pnlDateFrom)} إلى {formatDate(pnlDateTo)}
+            </div>
             
             <table className="w-full text-xs text-right border-collapse border border-slate-200">
               <tbody>
-                <tr className="bg-slate-50 border-b border-slate-200">
-                  <td className="p-3 font-semibold">إجمالي المبيعات (قسط):</td>
-                  <td className="p-3 font-bold text-left">{formatCurrency(totalSales, symbol)}</td>
+                {/* Category 1: Revenue */}
+                <tr className="bg-slate-100 font-bold border-b border-slate-300">
+                  <td className="p-2 text-slate-900" colSpan="2">أولاً: الإيرادات التشغيلية (Revenue)</td>
                 </tr>
                 <tr className="border-b border-slate-200">
-                  <td className="p-3 font-semibold">تكلفة الشراء (COGS):</td>
-                  <td className="p-3 font-bold text-left">{formatCurrency(totalCost, symbol)}</td>
-                </tr>
-                <tr className="bg-slate-50 border-b border-slate-200">
-                  <td className="p-3 font-semibold">الأرباح المتوقعة الكلية:</td>
-                  <td className="p-3 font-bold text-primary-700 text-left">{formatCurrency(totalExpectedProfit, symbol)}</td>
-                </tr>
-                <tr className="border-b border-slate-200">
-                  <td className="p-3 font-semibold">الأرباح المحصلة فعلياً:</td>
-                  <td className="p-3 font-bold text-green-700 text-left">{formatCurrency(totalCollectedProfit, symbol)}</td>
-                </tr>
-                <tr className="bg-slate-50 border-b border-slate-200">
-                  <td className="p-3 font-semibold">المصروفات والعمولات التشغيلية:</td>
-                  <td className="p-3 font-bold text-red-700 text-left">{formatCurrency(totalGeneralExpenses, symbol)}</td>
-                </tr>
-                <tr className="border-b-2 border-slate-400 font-bold bg-slate-100">
-                  <td className="p-3 text-sm">صافي الأرباح المحصلة (Net Income):</td>
-                  <td className={`p-3 text-sm text-left ${netCollectedProfit >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                    {formatCurrency(netCollectedProfit, symbol)}
+                  <td className="p-2 pr-6 text-slate-600">إيرادات المبيعات بالتقسيط (أقساط الفترة)</td>
+                  <td className="p-2 font-bold text-left">
+                    {formatCurrency(accountingBasis === 'accrual' ? accrualRevenueInstallment : cashRevenueInstallmentPayments, symbol)}
                   </td>
+                </tr>
+                <tr className="border-b border-slate-200">
+                  <td className="p-2 pr-6 text-slate-600">إيرادات المبيعات النقدية (مقدمات كاش)</td>
+                  <td className="p-2 font-bold text-left">
+                    {formatCurrency(accountingBasis === 'accrual' ? accrualRevenueCash : cashRevenueDownPayments, symbol)}
+                  </td>
+                </tr>
+                <tr className="bg-slate-50 font-bold border-b border-slate-300">
+                  <td className="p-2 text-slate-900">إجمالي الإيرادات التشغيلية</td>
+                  <td className="p-2 text-primary-700 text-left text-sm">
+                    {formatCurrency(displayRevenue, symbol)}
+                  </td>
+                </tr>
+
+                {/* Category 2: COGS */}
+                <tr className="bg-slate-100 font-bold border-b border-slate-300">
+                  <td className="p-2 text-slate-900" colSpan="2">ثانياً: تكلفة المبيعات (COGS)</td>
+                </tr>
+                <tr className="border-b border-slate-200">
+                  <td className="p-2 pr-6 text-slate-600">تكلفة الأجهزة المباعة تقسيط</td>
+                  <td className="p-2 font-bold text-left">
+                    {formatCurrency(accountingBasis === 'accrual' ? accrualCogsInstallment : cashCogsInstallmentPayments, symbol)}
+                  </td>
+                </tr>
+                <tr className="border-b border-slate-200">
+                  <td className="p-2 pr-6 text-slate-600">تكلفة الأجهزة المباعة كاش / فوري</td>
+                  <td className="p-2 font-bold text-left">
+                    {formatCurrency(accountingBasis === 'accrual' ? accrualCogsCash : cashCogsDownPayments, symbol)}
+                  </td>
+                </tr>
+                <tr className="bg-slate-50 font-bold border-b border-slate-300">
+                  <td className="p-2 text-slate-900">إجمالي تكلفة المبيعات</td>
+                  <td className="p-2 text-slate-800 text-left text-sm">
+                    {formatCurrency(displayCOGS, symbol)}
+                  </td>
+                </tr>
+
+                {/* Category 3: Gross Profit */}
+                <tr className="bg-slate-200 font-bold border-b border-slate-400">
+                  <td className="p-3 text-sm text-primary-800">مجمل الربح (Gross Profit)</td>
+                  <td className="p-3 text-primary-800 text-left text-base">
+                    {formatCurrency(displayGrossProfit, symbol)}
+                  </td>
+                </tr>
+                <tr className="border-b border-slate-200 text-[10px] text-slate-500">
+                  <td className="p-1 pr-4">هامش مجمل الربح (%)</td>
+                  <td className="p-1 text-left font-bold">{grossMarginPct.toFixed(1)}%</td>
+                </tr>
+
+                {/* Category 4: OPEX */}
+                <tr className="bg-slate-100 font-bold border-b border-slate-300">
+                  <td className="p-2 text-slate-900" colSpan="2">ثالثاً: المصاريف التشغيلية والإدارية (OPEX)</td>
+                </tr>
+                {Object.entries(EXPENSE_CATEGORIES).map(([key, label]) => (
+                  <tr key={key} className="border-b border-slate-200">
+                    <td className="p-2 pr-6 text-slate-600">{label}</td>
+                    <td className="p-2 font-bold text-left text-red-700">
+                      {categorySums[key] > 0 ? formatCurrency(categorySums[key], symbol) : '-'}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="bg-slate-50 font-bold border-b border-slate-300">
+                  <td className="p-2 text-slate-900">إجمالي المصاريف التشغيلية</td>
+                  <td className="p-2 text-red-700 text-left text-sm">
+                    {formatCurrency(totalGeneralExpenses, symbol)}
+                  </td>
+                </tr>
+                <tr className="border-b border-slate-200 text-[10px] text-slate-500">
+                  <td className="p-1 pr-4">نسبة المصاريف من الإيرادات (%)</td>
+                  <td className="p-1 text-left font-bold">{opexRatioPct.toFixed(1)}%</td>
+                </tr>
+
+                {/* Category 5: Net Profit */}
+                <tr className="bg-slate-300 font-bold border-b-2 border-slate-500">
+                  <td className="p-3 text-base text-slate-900">صافي الربح / الخسارة (Net Income)</td>
+                  <td className={`p-3 text-left text-lg ${displayNetProfit >= 0 ? 'text-green-800' : 'text-red-800'}`}>
+                    {formatCurrency(displayNetProfit, symbol)}
+                  </td>
+                </tr>
+                <tr className="text-[10px] text-slate-500">
+                  <td className="p-1 pr-4">صافي هامش الربح (%)</td>
+                  <td className="p-1 text-left font-bold">{netMarginPct.toFixed(1)}%</td>
                 </tr>
               </tbody>
             </table>
 
-            <h3 className="font-bold text-xs mt-6">كشف أرباح مبيعات العقود</h3>
+            <h3 className="font-bold text-xs mt-6">تفصيل عقود الفترة المحددة</h3>
             <table className="w-full text-[10px] text-right border-collapse border border-slate-200">
               <thead>
                 <tr className="bg-slate-100 border-b border-slate-300">
-                  <th className="p-2 border border-slate-200">العقد</th>
+                  <th className="p-2 border border-slate-200">التاريخ</th>
+                  <th className="p-2 border border-slate-200">العقد / السلعة</th>
                   <th className="p-2 border border-slate-200">العميل</th>
                   <th className="p-2 border border-slate-200">سعر البيع</th>
                   <th className="p-2 border border-slate-200">سعر الشراء</th>
                   <th className="p-2 border border-slate-200">الربح المتوقع</th>
                   <th className="p-2 border border-slate-200">المحصل فعلياً</th>
-                  <th className="p-2 border border-slate-200">الربح المحصل</th>
+                  <th className="p-2 border border-slate-200 font-bold">الربح المحصل</th>
                 </tr>
               </thead>
               <tbody>
-                {profitRows.map(({ contract, cost, expectedProfit, paidWithDp, collectedProfit }) => (
-                  <tr key={contract.id} className="border-b border-slate-200">
-                    <td className="p-2 border border-slate-200">{contract.item_description}</td>
-                    <td className="p-2 border border-slate-200">{contract.clients?.name}</td>
-                    <td className="p-2 border border-slate-200">{formatCurrency(contract.total_price, symbol)}</td>
-                    <td className="p-2 border border-slate-200">{cost > 0 ? formatCurrency(cost, symbol) : '-'}</td>
-                    <td className="p-2 border border-slate-200">{formatCurrency(expectedProfit, symbol)}</td>
-                    <td className="p-2 border border-slate-200">{formatCurrency(paidWithDp, symbol)}</td>
-                    <td className="p-2 border border-slate-200 font-bold">{formatCurrency(collectedProfit, symbol)}</td>
+                {profitRows.length === 0 ? (
+                  <tr>
+                    <td colSpan="8" className="p-4 text-center text-slate-400">
+                      لا توجد فواتير مبيعات مسجلة في هذه الفترة المحددة.
+                    </td>
                   </tr>
-                ))}
+                ) : (
+                  profitRows.map(({ contract, cost, expectedProfit, paidWithDp, collectedProfit }) => (
+                    <tr key={contract.id} className="border-b border-slate-200">
+                      <td className="p-2 border border-slate-200">{formatDate(contract.start_date)}</td>
+                      <td className="p-2 border border-slate-200 font-semibold">{contract.item_description}</td>
+                      <td className="p-2 border border-slate-200">{contract.clients?.name || 'مشتري نقدي'}</td>
+                      <td className="p-2 border border-slate-200">{formatCurrency(contract.total_price, symbol)}</td>
+                      <td className="p-2 border border-slate-200">{cost > 0 ? formatCurrency(cost, symbol) : '-'}</td>
+                      <td className="p-2 border border-slate-200 text-primary-700">{formatCurrency(expectedProfit, symbol)}</td>
+                      <td className="p-2 border border-slate-200 text-green-700">{formatCurrency(paidWithDp, symbol)}</td>
+                      <td className="p-2 border border-slate-200 font-bold text-green-800">{formatCurrency(collectedProfit, symbol)}</td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
