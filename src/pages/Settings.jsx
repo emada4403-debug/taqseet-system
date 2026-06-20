@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import { useSettings, useUpdateSettings } from '@/hooks/useApi'
 import { useToast } from '@/context/ToastContext'
 import { PageLoader } from '@/components/ui/States'
-import { Settings, Save, Building2, User, Calendar, DollarSign } from 'lucide-react'
+import { Settings, Save, Building2, User, Calendar, DollarSign, Database, Download, Trash2 } from 'lucide-react'
+import { supabase, isSupabaseConfigured, resetLocalDatabase } from '@/lib/supabase'
 
 export default function SettingsPage() {
   const { data: settings, isLoading } = useSettings()
@@ -16,6 +17,76 @@ export default function SettingsPage() {
     currency: 'EGP',
     currency_symbol: 'ج.م',
   })
+
+  const handleBackup = async () => {
+    try {
+      const { data: clients } = await supabase.from('clients').select('*')
+      const { data: suppliers } = await supabase.from('suppliers').select('*')
+      const { data: contracts } = await supabase.from('contracts').select('*')
+      const { data: installments } = await supabase.from('installments').select('*')
+      const { data: payments } = await supabase.from('payments').select('*')
+      const { data: dbSettings } = await supabase.from('settings').select('*')
+      const { data: expenses } = await supabase.from('expenses').select('*')
+
+      const backupData = {
+        version: '1.0.0',
+        timestamp: new Date().toISOString(),
+        data: {
+          clients: clients || [],
+          suppliers: suppliers || [],
+          contracts: contracts || [],
+          installments: installments || [],
+          payments: payments || [],
+          settings: dbSettings || [],
+          expenses: expenses || []
+        }
+      }
+
+      const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(backupData, null, 2))}`
+      const downloadAnchor = document.createElement('a')
+      downloadAnchor.setAttribute('href', jsonString)
+      downloadAnchor.setAttribute('download', `taqseet_backup_${new Date().toISOString().split('T')[0]}.json`)
+      document.body.appendChild(downloadAnchor)
+      downloadAnchor.click()
+      downloadAnchor.remove()
+
+      toast.success('تم تصدير وتحميل النسخة الاحتياطية بنجاح ✓')
+    } catch (err) {
+      toast.error('فشل تصدير النسخة الاحتياطية: ' + err.message)
+    }
+  }
+
+  const handleClear = async () => {
+    const isConfirmed = window.confirm(
+      '🚨 تحذير هام جداً:\n\nهل أنت متأكد من رغبتك في مسح كافة البيانات بشكل نهائي؟ لا يمكن التراجع عن هذا الإجراء وسيتم حذف جميع العقود، العملاء، المدفوعات والموردين.'
+    )
+    if (!isConfirmed) return
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) throw new Error('لم يتم العثور على جلسة مستخدم نشطة.')
+
+      if (!isSupabaseConfigured) {
+        resetLocalDatabase()
+        toast.success('تمت إعادة تعيين قاعدة البيانات التجريبية بنجاح ✓')
+        return
+      }
+
+      // Sequential deletions to respect constraints
+      await supabase.from('payments').delete().eq('user_id', user.id)
+      await supabase.from('installments').delete().eq('user_id', user.id)
+      await supabase.from('contracts').delete().eq('user_id', user.id)
+      await supabase.from('clients').delete().eq('user_id', user.id)
+      await supabase.from('suppliers').delete().eq('user_id', user.id)
+      await supabase.from('expenses').delete().eq('user_id', user.id)
+      await supabase.from('safe_transactions').delete().eq('user_id', user.id)
+
+      toast.success('تم مسح وإعادة تعيين كافة بياناتك بنجاح ✓')
+      setTimeout(() => window.location.reload(), 1000)
+    } catch (err) {
+      toast.error('فشل مسح البيانات: ' + err.message)
+    }
+  }
 
   useEffect(() => {
     if (settings) {
@@ -134,6 +205,37 @@ export default function SettingsPage() {
                 placeholder="ج.م"
               />
             </div>
+          </div>
+        </div>
+
+        {/* Data Management Tools */}
+        <div className="card p-5 space-y-4 border-2 border-dashed border-red-300 dark:border-red-900/30">
+          <h2 className="font-bold text-heading flex items-center gap-2 text-red-600">
+            <Database size={18} />
+            إدارة البيانات والنسخ الاحتياطي
+          </h2>
+          <p className="text-muted text-xs leading-relaxed">
+            يمكنك تحميل نسخة احتياطية من كافة البيانات المسجلة بالنظام بصيغة ملف JSON لاستعادتها لاحقاً، أو مسح كافة البيانات لإعادة تهيئة النظام بالكامل.
+          </p>
+
+          <div className="flex flex-col sm:flex-row gap-3 pt-2">
+            <button
+              type="button"
+              onClick={handleBackup}
+              className="btn-secondary flex-1 flex items-center justify-center gap-2 py-2.5"
+            >
+              <Download size={16} />
+              <span>تحميل نسخة احتياطية (Backup)</span>
+            </button>
+            
+            <button
+              type="button"
+              onClick={handleClear}
+              className="btn bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 dark:bg-red-950/20 dark:hover:bg-red-900/20 dark:border-red-900/30 dark:text-red-400 flex-1 flex items-center justify-center gap-2 py-2.5"
+            >
+              <Trash2 size={16} />
+              <span>مسح كافة البيانات (Reset)</span>
+            </button>
           </div>
         </div>
 

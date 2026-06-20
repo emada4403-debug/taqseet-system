@@ -66,6 +66,30 @@ export const useDashboard = () => {
       )
       const lateCount = allInstallments.filter(i => i.status === 'late').length
 
+      // Get recent payments
+      const { data: recentPayments } = await supabase
+        .from('payments')
+        .select(`
+          *,
+          contracts (
+            item_description,
+            clients (name),
+            suppliers (name)
+          )
+        `)
+        .order('created_at', { ascending: false })
+        .limit(5)
+
+      // Get all contracts to calculate collection rate
+      const { data: allContractsData } = await supabase
+        .from('contracts')
+        .select('type, total_price')
+
+      const clientContracts = allContractsData?.filter(c => c.type === 'RECEIVABLE') || []
+      const totalContractsValue = clientContracts.reduce((sum, c) => sum + parseFloat(c.total_price || 0), 0)
+      const totalCollected = Math.max(0, totalContractsValue - totalReceivables)
+      const collectionRate = totalContractsValue > 0 ? (totalCollected / totalContractsValue) * 100 : 0
+
       return {
         totalReceivables,
         totalPayables,
@@ -74,6 +98,9 @@ export const useDashboard = () => {
         weekInstallments,
         lateCount,
         allInstallments,
+        recentPayments: recentPayments || [],
+        totalCollected,
+        collectionRate,
       }
     },
     staleTime: 1000 * 60 * 5, // 5 minutes

@@ -15,7 +15,7 @@ import { useToast } from '@/context/ToastContext'
 import {
   ArrowRight, Phone, MapPin, CreditCard, User,
   ChevronDown, ChevronUp, MessageCircle, ExternalLink,
-  FileText, Calendar, TrendingUp, Plus, Edit, Trash2, Printer
+  FileText, Calendar, TrendingUp, Plus, Edit, Trash2, Printer, AlertTriangle
 } from 'lucide-react'
 import { StatementPrintTemplate } from '@/components/ui/PrintTemplates'
 
@@ -391,22 +391,38 @@ export default function ClientDetail() {
         footer={
           <div className="flex gap-3 w-full">
             <button onClick={() => setShowDelete(false)} className="btn-secondary flex-1">إلغاء</button>
-            <button
-              onClick={handleDelete}
-              className="btn-danger flex-1"
-              disabled={deleteClient.isPending}
-            >
-              {deleteClient.isPending ? 'جاري الحذف...' : 'تأكيد الحذف'}
-            </button>
+            {(!client.contracts || client.contracts.length === 0) && (
+              <button
+                onClick={handleDelete}
+                className="btn-danger flex-1"
+                disabled={deleteClient.isPending}
+              >
+                {deleteClient.isPending ? 'جاري الحذف...' : 'تأكيد الحذف'}
+              </button>
+            )}
           </div>
         }
       >
-        <div className="space-y-3">
-          <p className="text-heading font-medium">هل أنت متأكد من رغبتك في حذف العميل <strong className="text-primary-600">"{client.name}"</strong>؟</p>
-          <p className="text-muted text-sm leading-relaxed">
-            سيؤدي هذا الإجراء إلى نقل العميل للأرشيف وإخفائه من قائمة المديونيات النشطة. لن يتم حذف أي من عقوده أو أقساطه المسجلة.
-          </p>
-        </div>
+        {client.contracts && client.contracts.length > 0 ? (
+          <div className="space-y-3 py-2">
+            <div className="w-12 h-12 rounded-full bg-warning-50 dark:bg-warning-950/20 text-warning-600 flex items-center justify-center mx-auto mb-2">
+              <AlertTriangle size={24} />
+            </div>
+            <p className="text-heading font-bold text-center text-sm">
+              لا يمكن حذف هذا العميل!
+            </p>
+            <p className="text-muted text-xs leading-relaxed text-center">
+              العميل <strong className="text-primary-600">"{client.name}"</strong> لديه عقود مسجلة أو تعاملات سابقة في النظام. يرجى تسوية العقود أو مسحها أولاً لتتمكن من حذف العميل.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-heading font-medium">هل أنت متأكد من رغبتك في حذف العميل <strong className="text-primary-600">"{client.name}"</strong>؟</p>
+            <p className="text-muted text-sm leading-relaxed">
+              سيؤدي هذا الإجراء إلى أرشفة العميل وإخفائه من قائمة المديونيات النشطة.
+            </p>
+          </div>
+        )}
       </Modal>
 
       <StatementPrintTemplate client={client} symbol={symbol} businessSettings={settings} />
