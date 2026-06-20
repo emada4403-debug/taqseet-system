@@ -16,6 +16,7 @@ export default function NewContract() {
   const createContract = useCreateContract()
   const toast = useToast()
   const [step, setStep] = useState(0)
+  const [purchaseMethod, setPurchaseMethod] = useState('credit') // 'credit' | 'cash'
   const [form, setForm] = useState({
     type: searchParams.get('type') || 'RECEIVABLE',
     client_id: searchParams.get('client') || '',
@@ -34,13 +35,13 @@ export default function NewContract() {
 
   // Calculated values
   const totalPrice = parseFloat(form.total_price) || 0
-  const downPayment = parseFloat(form.down_payment) || 0
-  const installmentCount = parseInt(form.installment_count) || 1
-  const remaining = totalPrice - downPayment
-  const installmentAmount = remaining > 0 ? remaining / installmentCount : 0
+  const downPayment = purchaseMethod === 'cash' ? totalPrice : (parseFloat(form.down_payment) || 0)
+  const installmentCount = purchaseMethod === 'cash' ? 0 : (parseInt(form.installment_count) || 1)
+  const remaining = purchaseMethod === 'cash' ? 0 : (totalPrice - downPayment)
+  const installmentAmount = purchaseMethod === 'cash' ? 0 : (remaining > 0 ? remaining / installmentCount : 0)
 
   // Preview installment dates
-  const installmentDates = form.start_date ? generateInstallmentDates(
+  const installmentDates = purchaseMethod === 'credit' && form.start_date ? generateInstallmentDates(
     form.start_date, installmentCount, parseInt(form.due_day)
   ) : []
 
@@ -55,7 +56,7 @@ export default function NewContract() {
       if (!form.item_description) { toast.error('يرجى إدخال وصف البضاعة'); return false }
       if (isReceivable && (!form.purchase_price || parseFloat(form.purchase_price) <= 0)) { toast.error('يرجى إدخال سعر الشراء'); return false }
       if (!totalPrice || totalPrice <= 0) { toast.error('يرجى إدخال السعر الإجمالي'); return false }
-      if (downPayment >= totalPrice) { toast.error('المقدم يجب أن يكون أقل من الإجمالي'); return false }
+      if (purchaseMethod === 'credit' && downPayment >= totalPrice) { toast.error('المقدم يجب أن يكون أقل من الإجمالي'); return false }
     }
     return true
   }
@@ -81,9 +82,9 @@ export default function NewContract() {
         installment_count: installmentCount,
         installment_amount: installmentAmount,
         start_date: form.start_date,
-        due_day: parseInt(form.due_day),
+        due_day: purchaseMethod === 'cash' ? 1 : parseInt(form.due_day),
         notes: form.notes || null,
-        status: 'active',
+        status: purchaseMethod === 'cash' ? 'completed' : 'active',
       }
 
       const installments = installmentDates.map(date => ({
@@ -91,8 +92,8 @@ export default function NewContract() {
         amount: installmentAmount,
       }))
 
-      const result = await createContract.mutateAsync({ contractData, installments })
-      toast.success('تم إنشاء العقد وتوليد الأقساط بنجاح ✓')
+      const result = await createContract.mutateAsync({ contractData, installments, isCash: purchaseMethod === 'cash' })
+      toast.success('تم إنشاء العقد بنجاح ✓')
 
       if (isReceivable) {
         navigate(`/receivables/${form.client_id}`)
@@ -218,11 +219,41 @@ export default function NewContract() {
               onChange={e => setForm(f => ({ ...f, item_description: e.target.value }))} required />
           </div>
 
-          {isReceivable ? (
-            <>
+          {/* طريقة التعامل */}
+          <div className="form-group">
+            <label className="label">طريقة التعامل والدفع *</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setPurchaseMethod('credit')}
+                className={`py-2.5 px-3 rounded-xl text-xs font-semibold border-2 transition-all ${
+                  purchaseMethod === 'credit'
+                    ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-400'
+                    : 'border-surface-200 dark:border-surface-700 text-muted hover:border-primary-300'
+                }`}
+              >
+                تقسيط / آجل (حساب العميل/المورد)
+              </button>
+              <button
+                type="button"
+                onClick={() => setPurchaseMethod('cash')}
+                className={`py-2.5 px-3 rounded-xl text-xs font-semibold border-2 transition-all ${
+                  purchaseMethod === 'cash'
+                    ? 'border-success-500 bg-success-50 dark:bg-success-950/20 text-success-700 dark:text-success-400'
+                    : 'border-surface-200 dark:border-surface-700 text-muted hover:border-success-300'
+                }`}
+              >
+                نقدي (كاش - حركة خزينة مباشرة)
+              </button>
+            </div>
+          </div>
+
+          {purchaseMethod === 'cash' ? (
+            /* CASH LAYOUT */
+            isReceivable ? (
               <div className="grid grid-cols-2 gap-3">
                 <div className="form-group">
-                  <label className="label">سعر الشراء *</label>
+                  <label className="label">سعر الشراء (التكلفة) *</label>
                   <div className="relative">
                     <input type="number" className="input pl-14" placeholder="0"
                       value={form.purchase_price} onChange={e => setForm(f => ({ ...f, purchase_price: e.target.value }))} required />
@@ -230,7 +261,7 @@ export default function NewContract() {
                   </div>
                 </div>
                 <div className="form-group">
-                  <label className="label">سعر البيع *</label>
+                  <label className="label">سعر البيع الكاش *</label>
                   <div className="relative">
                     <input type="number" className="input pl-14" placeholder="0"
                       value={form.total_price} onChange={e => setForm(f => ({ ...f, total_price: e.target.value }))} required />
@@ -238,66 +269,101 @@ export default function NewContract() {
                   </div>
                 </div>
               </div>
-
-              {/* Profit preview if both entered */}
-              {parseFloat(form.total_price) > 0 && parseFloat(form.purchase_price) > 0 && (
-                <div className="bg-success-50 dark:bg-success-950/20 text-success-800 dark:text-success-300 rounded-xl p-3 text-xs flex justify-between font-bold">
-                  <span>الربح المحتسب:</span>
-                  <span>{formatCurrency(parseFloat(form.total_price) - parseFloat(form.purchase_price), symbol)}</span>
-                </div>
-              )}
-              
+            ) : (
               <div className="form-group">
-                <label className="label">المقدم / الدفعة الأولى</label>
-                <div className="relative">
-                  <input type="number" className="input pl-14" placeholder="0"
-                    value={form.down_payment} onChange={e => setForm(f => ({ ...f, down_payment: e.target.value }))} />
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="grid grid-cols-2 gap-3">
-              <div className="form-group">
-                <label className="label">سعر الشراء *</label>
+                <label className="label">سعر الشراء الكاش *</label>
                 <div className="relative">
                   <input type="number" className="input pl-14" placeholder="0"
                     value={form.total_price} onChange={e => setForm(f => ({ ...f, total_price: e.target.value }))} required />
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
                 </div>
               </div>
-              <div className="form-group">
-                <label className="label">المقدم / الدفعة الأولى</label>
-                <div className="relative">
-                  <input type="number" className="input pl-14" placeholder="0"
-                    value={form.down_payment} onChange={e => setForm(f => ({ ...f, down_payment: e.target.value }))} />
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
+            )
+          ) : (
+            /* CREDIT/INSTALLMENT LAYOUT */
+            isReceivable ? (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="form-group">
+                    <label className="label">سعر الشراء (التكلفة) *</label>
+                    <div className="relative">
+                      <input type="number" className="input pl-14" placeholder="0"
+                        value={form.purchase_price} onChange={e => setForm(f => ({ ...f, purchase_price: e.target.value }))} required />
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label className="label">سعر البيع (الإجمالي) *</label>
+                    <div className="relative">
+                      <input type="number" className="input pl-14" placeholder="0"
+                        value={form.total_price} onChange={e => setForm(f => ({ ...f, total_price: e.target.value }))} required />
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
+                    </div>
+                  </div>
                 </div>
+
+                {parseFloat(form.total_price) > 0 && parseFloat(form.purchase_price) > 0 && (
+                  <div className="bg-success-50 dark:bg-success-950/20 text-success-800 dark:text-success-300 rounded-xl p-3 text-xs flex justify-between font-bold">
+                    <span>الربح المحتسب:</span>
+                    <span>{formatCurrency(parseFloat(form.total_price) - parseFloat(form.purchase_price), symbol)}</span>
+                  </div>
+                )}
+                
+                <div className="form-group">
+                  <label className="label">المقدم / الدفعة الأولى</label>
+                  <div className="relative">
+                    <input type="number" className="input pl-14" placeholder="0"
+                      value={form.down_payment} onChange={e => setForm(f => ({ ...f, down_payment: e.target.value }))} />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="form-group">
+                  <label className="label">سعر الشراء *</label>
+                  <div className="relative">
+                    <input type="number" className="input pl-14" placeholder="0"
+                      value={form.total_price} onChange={e => setForm(f => ({ ...f, total_price: e.target.value }))} required />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="label">المقدم / الدفعة الأولى</label>
+                  <div className="relative">
+                    <input type="number" className="input pl-14" placeholder="0"
+                      value={form.down_payment} onChange={e => setForm(f => ({ ...f, down_payment: e.target.value }))} />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
+                  </div>
+                </div>
+              </div>
+            )
+          )}
+
+          {/* Conditional Installment Options */}
+          {purchaseMethod === 'credit' && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="form-group">
+                <label className="label">عدد الأقساط</label>
+                <input type="number" className="input" placeholder="12" min="1" max="120"
+                  value={form.installment_count} onChange={e => setForm(f => ({ ...f, installment_count: e.target.value }))} />
+              </div>
+              <div className="form-group">
+                <label className="label">يوم الاستحقاق من الشهر</label>
+                <input type="number" className="input" placeholder="1" min="1" max="28"
+                  value={form.due_day} onChange={e => setForm(f => ({ ...f, due_day: e.target.value }))} />
               </div>
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="form-group">
-              <label className="label">عدد الأقساط</label>
-              <input type="number" className="input" placeholder="12" min="1" max="120"
-                value={form.installment_count} onChange={e => setForm(f => ({ ...f, installment_count: e.target.value }))} />
-            </div>
-            <div className="form-group">
-              <label className="label">يوم الاستحقاق من الشهر</label>
-              <input type="number" className="input" placeholder="1" min="1" max="28"
-                value={form.due_day} onChange={e => setForm(f => ({ ...f, due_day: e.target.value }))} />
-            </div>
-          </div>
-
           <div className="form-group">
-            <label className="label"><Calendar size={14} className="inline ml-1" />تاريخ البداية</label>
+            <label className="label"><Calendar size={14} className="inline ml-1" />تاريخ البداية / المعاملة</label>
             <input type="date" className="input" value={form.start_date}
               onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} />
           </div>
 
           {/* Auto-calculated preview */}
-          {totalPrice > 0 && (
+          {purchaseMethod === 'credit' && totalPrice > 0 && (
             <div className="bg-primary-50 dark:bg-primary-900/20 rounded-xl p-4 space-y-2">
               <div className="flex items-center gap-2 mb-3">
                 <Calculator size={16} className="text-primary-600" />
@@ -313,6 +379,13 @@ export default function NewContract() {
                   {formatCurrency(installmentAmount, symbol)}
                 </span>
               </div>
+            </div>
+          )}
+
+          {purchaseMethod === 'cash' && isReceivable && totalPrice > 0 && parseFloat(form.purchase_price) > 0 && (
+            <div className="bg-success-50 dark:bg-success-950/20 rounded-xl p-4 space-y-2 font-bold text-success-800 dark:text-success-300 text-sm flex justify-between">
+              <span>صافي الربح المحقق فوراً:</span>
+              <span>{formatCurrency(totalPrice - parseFloat(form.purchase_price), symbol)}</span>
             </div>
           )}
 
@@ -332,13 +405,19 @@ export default function NewContract() {
 
             <div className="space-y-3">
               {[
-                { label: 'نوع العقد', value: isReceivable ? '📥 مديونية (عميل)' : '📤 مستحقة (مورد)' },
+                { label: 'نوع العقد والتعامل', value: isReceivable 
+                  ? (purchaseMethod === 'cash' ? '📥 بيع نقدي (كاش)' : '📥 مديونية تقسيط (عميل)') 
+                  : (purchaseMethod === 'cash' ? '📤 شراء نقدي (كاش)' : '📤 مستحقة تقسيط (مورد)') },
                 { label: 'البضاعة', value: form.item_description },
-                { label: 'السعر الإجمالي', value: formatCurrency(totalPrice, symbol) },
-                { label: 'المقدم', value: formatCurrency(downPayment, symbol) },
-                { label: 'عدد الأقساط', value: `${installmentCount} قسط` },
-                { label: 'قيمة كل قسط', value: formatCurrency(installmentAmount, symbol) },
-                { label: 'يوم الاستحقاق', value: `${form.due_day} من كل شهر` },
+                { label: 'القيمة المالية', value: formatCurrency(totalPrice, symbol) },
+                ...(purchaseMethod === 'credit' ? [
+                  { label: 'المقدم', value: formatCurrency(downPayment, symbol) },
+                  { label: 'عدد الأقساط', value: `${installmentCount} قسط` },
+                  { label: 'قيمة كل قسط', value: formatCurrency(installmentAmount, symbol) },
+                  { label: 'يوم الاستحقاق', value: `${form.due_day} من كل شهر` },
+                ] : [
+                  { label: 'حالة الدفع', value: 'سداد نقدي فوري بالخزينة' }
+                ]),
               ].map(item => (
                 <div key={item.label} className="flex justify-between text-sm py-1.5 border-b border-surface-100 dark:border-surface-700 last:border-0">
                   <span className="text-muted">{item.label}</span>
@@ -349,27 +428,36 @@ export default function NewContract() {
           </div>
 
           {/* Installment Schedule Preview */}
-          <div className="card p-5">
-            <h3 className="font-bold text-heading mb-3">جدول الأقساط المولّد تلقائياً</h3>
-            <div className="max-h-60 overflow-y-auto space-y-1">
-              {installmentDates.map((date, idx) => (
-                <div key={idx} className="flex items-center justify-between py-1.5 text-sm border-b border-surface-100 dark:border-surface-700 last:border-0">
-                  <div className="flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-full bg-primary-100 dark:bg-primary-900/30 text-primary-600 text-xs flex items-center justify-center font-bold">
-                      {idx + 1}
-                    </span>
-                    <span className="text-muted">{formatDate(date)}</span>
+          {purchaseMethod === 'credit' ? (
+            <div className="card p-5">
+              <h3 className="font-bold text-heading mb-3">جدول الأقساط المولّد تلقائياً</h3>
+              <div className="max-h-60 overflow-y-auto space-y-1">
+                {installmentDates.map((date, idx) => (
+                  <div key={idx} className="flex items-center justify-between py-1.5 text-sm border-b border-surface-100 dark:border-surface-700 last:border-0">
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-full bg-primary-100 dark:bg-primary-900/30 text-primary-600 text-xs flex items-center justify-center font-bold">
+                        {idx + 1}
+                      </span>
+                      <span className="text-muted">{formatDate(date)}</span>
+                    </div>
+                    <span className="font-semibold">{formatCurrency(installmentAmount, symbol)}</span>
                   </div>
-                  <span className="font-semibold">{formatCurrency(installmentAmount, symbol)}</span>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="alert bg-success-50 dark:bg-success-900/20 border-success-200 dark:border-success-600/30 text-success-800 dark:text-success-300">
+              <Info size={16} className="flex-shrink-0" />
+              <span className="text-sm font-bold">سيتم سداد كامل القيمة من الخزينة فوراً كعملية نقدية دون أقساط</span>
+            </div>
+          )}
 
-          <div className="alert bg-primary-50 dark:bg-primary-900/20 border-primary-200 dark:border-primary-600/30 text-primary-800 dark:text-primary-300">
-            <Info size={16} className="flex-shrink-0" />
-            <span className="text-sm">سيتم إنشاء {installmentCount} قسط تلقائياً عند تأكيد العقد</span>
-          </div>
+          {purchaseMethod === 'credit' && (
+            <div className="alert bg-primary-50 dark:bg-primary-900/20 border-primary-200 dark:border-primary-600/30 text-primary-800 dark:text-primary-300">
+              <Info size={16} className="flex-shrink-0" />
+              <span className="text-sm">سيتم إنشاء {installmentCount} قسط تلقائياً عند تأكيد العقد</span>
+            </div>
+          )}
         </div>
       )}
 

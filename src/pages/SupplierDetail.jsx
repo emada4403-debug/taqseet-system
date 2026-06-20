@@ -8,7 +8,7 @@ import {
 } from '@/lib/utils'
 import { PageLoader, ErrorState } from '@/components/ui/States'
 import PaymentModal from '@/components/ui/PaymentModal'
-import { ArrowRight, Phone, Building2, Store, Plus, FileText, Printer, Calendar, ArrowUpRight, CheckCircle2 } from 'lucide-react'
+import { ArrowRight, Phone, Building2, Store, Plus, FileText, Printer, Calendar, ArrowUpRight, CheckCircle2, DollarSign } from 'lucide-react'
 
 // Unified Supplier Statement Print Template
 function SupplierStatementPrintTemplate({ supplier, symbol, businessSettings, ledgerEntries }) {
@@ -217,6 +217,19 @@ export default function SupplierDetail() {
           <button onClick={() => window.print()} className="btn-success flex items-center gap-1.5">
             <Printer size={16} />
             <span>طباعة كشف الحساب</span>
+          </button>
+          <button
+            onClick={() => {
+              if (unpaidInstallments.length === 0) {
+                alert('لا توجد أقساط مستحقة لهذا المورد حالياً ✓')
+                return
+              }
+              setSelectedInstallment(unpaidInstallments[0])
+            }}
+            className="btn bg-amber-600 hover:bg-amber-700 text-white flex items-center gap-1.5 border border-amber-600 shadow-sm"
+          >
+            <DollarSign size={16} />
+            <span>سداد دفعة</span>
           </button>
           <Link
             to={`/contracts/new?supplier=${supplier.id}&type=PAYABLE`}

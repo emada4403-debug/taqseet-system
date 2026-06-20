@@ -373,34 +373,78 @@ export const useCreateContract = () => {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async ({ contractData, installments }) => {
+    mutationFn: async ({ contractData, installments, isCash = false }) => {
       const { data: { user } } = await supabase.auth.getUser()
 
       // Insert contract (including manual purchase_price and profit)
       const { data: contract, error: contractError } = await supabase
         .from('contracts')
-        .insert({ ...contractData, user_id: user.id })
+        .insert({ 
+          ...contractData, 
+          user_id: user.id,
+          status: isCash ? 'completed' : (contractData.status || 'active')
+        })
         .select()
         .single()
 
       if (contractError) throw contractError
 
-      // Insert all installments
-      const installmentRecords = installments.map((inst, idx) => ({
-        user_id: user.id,
-        contract_id: contract.id,
-        installment_number: idx + 1,
-        due_date: inst.due_date,
-        amount: inst.amount,
-        remaining_amount: inst.amount,
-        status: 'pending',
-      }))
+      // Insert all installments if not a cash contract
+      if (!isCash && installments && installments.length > 0) {
+        const installmentRecords = installments.map((inst, idx) => ({
+          user_id: user.id,
+          contract_id: contract.id,
+          installment_number: idx + 1,
+          due_date: inst.due_date,
+          amount: inst.amount,
+          remaining_amount: inst.amount,
+          status: 'pending',
+        }))
 
-      const { error: installError } = await supabase
-        .from('installments')
-        .insert(installmentRecords)
+        const { error: installError } = await supabase
+          .from('installments')
+          .insert(installmentRecords)
 
-      if (installError) throw installError
+        if (installError) throw installError
+      }
+
+      // Record Safe transactions
+      if (isCash) {
+        const isReceivable = contract.type === 'RECEIVABLE'
+        const { error: safeError } = await supabase
+          .from('safe_transactions')
+          .insert({
+            user_id: user.id,
+            type: isReceivable ? 'deposit' : 'withdrawal',
+            amount: contract.total_price,
+            category: isReceivable ? 'contract_downpayment' : 'manual_withdrawal',
+            contract_id: contract.id,
+            transaction_date: contract.start_date,
+            notes: isReceivable
+              ? `بيع نقدي مباشر: ${contract.item_description}`
+              : `شراء نقدي مباشر من مورد: ${contract.item_description}`
+          })
+        if (safeError) throw safeError
+      } else {
+        const dp = parseFloat(contract.down_payment || 0)
+        if (dp > 0) {
+          const isReceivable = contract.type === 'RECEIVABLE'
+          const { error: safeError } = await supabase
+            .from('safe_transactions')
+            .insert({
+              user_id: user.id,
+              type: isReceivable ? 'deposit' : 'withdrawal',
+              amount: dp,
+              category: 'contract_downpayment',
+              contract_id: contract.id,
+              transaction_date: contract.start_date,
+              notes: isReceivable
+                ? `مقدم عقد مديونية: ${contract.item_description}`
+                : `مقدم عقد مستحقة للمورد: ${contract.item_description}`
+            })
+          if (safeError) throw safeError
+        }
+      }
 
       return contract
     },
@@ -410,6 +454,8 @@ export const useCreateContract = () => {
       queryClient.invalidateQueries({ queryKey: ['suppliers'] })
       queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       queryClient.invalidateQueries({ queryKey: ['products'] })
+      queryClient.invalidateQueries({ queryKey: ['safe_transactions'] })
+      queryClient.invalidateQueries({ queryKey: ['safe_summary'] })
     },
   })
 }

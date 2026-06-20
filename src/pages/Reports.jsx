@@ -122,6 +122,17 @@ export default function Reports() {
   const totalGeneralExpenses = expenses?.reduce((sum, e) => sum + parseFloat(e.amount || 0), 0) || 0
   const netCollectedProfit = totalCollectedProfit - totalGeneralExpenses
 
+  // --- Calculations for Expenses Report ---
+  const categorySums = { rent: 0, electricity: 0, salaries: 0, marketing: 0, maintenance: 0, other: 0 }
+  expenses?.forEach(e => {
+    const cat = e.category || 'other'
+    if (categorySums[cat] !== undefined) {
+      categorySums[cat] += parseFloat(e.amount || 0)
+    } else {
+      categorySums.other += parseFloat(e.amount || 0)
+    }
+  })
+
   // --- Calculations for Aging Report ---
   const agingBuckets = { '1-30': [], '31-60': [], '61-90': [], '90+': [] }
   receivableContracts.forEach(c => {
@@ -237,6 +248,25 @@ export default function Reports() {
     XLSX.writeFile(wb, 'suppliers_payables.xlsx')
   }
 
+  const handleExportExpensesExcel = () => {
+    const rows = [
+      ['تاريخ المصروف', 'عنوان المصروف', 'الفئة', 'الملاحظات', 'المبلغ'],
+      ...expenses.map(e => [
+        formatDate(e.expense_date),
+        e.title,
+        EXPENSE_CATEGORIES[e.category] || e.category || 'أخرى',
+        e.notes || '-',
+        parseFloat(e.amount || 0)
+      ]),
+      [],
+      ['إجمالي المصاريف العامة', totalGeneralExpenses]
+    ]
+    const ws = XLSX.utils.aoa_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'تقرير المصاريف')
+    XLSX.writeFile(wb, 'expenses_report.xlsx')
+  }
+
   const printReport = () => {
     window.print()
   }
@@ -263,6 +293,7 @@ export default function Reports() {
           { id: 'profits', label: 'تقرير الأرباح والخسائر', icon: BarChart3 },
           { id: 'client_receivables', label: 'مديونيات العملاء', icon: User },
           { id: 'supplier_payables', label: 'مديونيات الموردين', icon: Store },
+          { id: 'expenses', label: 'تحليل المصاريف العامة', icon: Wallet },
           { id: 'aging', label: 'تقرير التأخير وأعمار الديون', icon: AlertTriangle }
         ].map(tab => (
           <button
@@ -320,6 +351,42 @@ export default function Reports() {
               <span className={`text-2xl font-extrabold block mt-1 ${netCollectedProfit >= 0 ? 'text-green-600' : 'text-danger-600'}`}>
                 {formatCurrency(netCollectedProfit, symbol)}
               </span>
+            </div>
+          </div>
+
+          {/* مخطط هيكل الإيرادات والتكاليف والمصاريف */}
+          <div className="card p-5 space-y-4 border border-surface-200 dark:border-surface-700 shadow-sm">
+            <h3 className="font-bold text-heading text-sm">مخطط هيكل الإيرادات والتكاليف والمصاريف</h3>
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs text-muted">
+                  <span>تكلفة الشراء (التكلفة) من إجمالي المبيعات</span>
+                  <span className="font-bold text-heading">{totalSales > 0 ? ((totalCost / totalSales) * 100).toFixed(0) : 0}%</span>
+                </div>
+                <div className="h-2.5 bg-surface-100 dark:bg-surface-700 rounded-full overflow-hidden">
+                  <div className="h-full bg-slate-500 rounded-full" style={{ width: `${totalSales > 0 ? (totalCost / totalSales) * 100 : 0}%` }} />
+                </div>
+              </div>
+              
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs text-muted">
+                  <span>هامش الربح المتوقع من إجمالي المبيعات</span>
+                  <span className="font-bold text-heading">{totalSales > 0 ? ((totalExpectedProfit / totalSales) * 100).toFixed(0) : 0}%</span>
+                </div>
+                <div className="h-2.5 bg-surface-100 dark:bg-surface-700 rounded-full overflow-hidden">
+                  <div className="h-full bg-primary-500 rounded-full" style={{ width: `${totalSales > 0 ? (totalExpectedProfit / totalSales) * 100 : 0}%` }} />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs text-muted">
+                  <span>المصاريف التشغيلية مقارنة بالأرباح المتوقعة</span>
+                  <span className="font-bold text-heading">{totalExpectedProfit > 0 ? Math.min(100, (totalGeneralExpenses / totalExpectedProfit) * 100).toFixed(0) : 0}%</span>
+                </div>
+                <div className="h-2.5 bg-surface-100 dark:bg-surface-700 rounded-full overflow-hidden">
+                  <div className="h-full bg-red-500 rounded-full" style={{ width: `${totalExpectedProfit > 0 ? Math.min(100, (totalGeneralExpenses / totalExpectedProfit) * 100) : 0}%` }} />
+                </div>
+              </div>
             </div>
           </div>
 
@@ -530,6 +597,87 @@ export default function Reports() {
                   })}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================== */}
+      {/* 4. DETAILED EXPENSES TAB */}
+      {/* ========================================== */}
+      {activeTab === 'expenses' && (
+        <div className="space-y-6 no-print">
+          <div className="flex justify-between items-center">
+            <h2 className="text-lg font-bold text-heading">تقرير وتحليل المصاريف العامة</h2>
+            <button onClick={handleExportExpensesExcel} className="btn-secondary btn-sm flex items-center gap-1">
+              <FileSpreadsheet size={14} />
+              <span>تصدير Excel</span>
+            </button>
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-6">
+            {/* Categories breakdown graph */}
+            <div className="lg:col-span-1 card p-5 space-y-4">
+              <h3 className="font-bold text-heading text-sm">توزيع المصاريف حسب الفئة</h3>
+              <div className="space-y-4">
+                {Object.entries(EXPENSE_CATEGORIES).map(([key, label]) => {
+                  const amt = categorySums[key] || 0
+                  const pct = totalGeneralExpenses > 0 ? (amt / totalGeneralExpenses) * 100 : 0
+                  return (
+                    <div key={key} className="space-y-1">
+                      <div className="flex justify-between text-xs text-muted">
+                        <span>{label}</span>
+                        <span className="font-bold text-heading">{formatCurrency(amt, symbol)} ({pct.toFixed(0)}%)</span>
+                      </div>
+                      <div className="h-2 bg-surface-100 dark:bg-surface-700 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-red-500 to-red-600 rounded-full"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Expenses List */}
+            <div className="lg:col-span-2 card overflow-hidden">
+              <div className="p-4 border-b border-surface-200 dark:border-surface-700 bg-surface-50">
+                <h3 className="font-bold text-heading text-sm">سجل المصروفات العامة والتشغيلية</h3>
+              </div>
+              <div className="overflow-x-auto max-h-[350px] overflow-y-auto">
+                <table className="table text-right text-xs">
+                  <thead>
+                    <tr className="bg-surface-50 dark:bg-surface-800">
+                      <th className="p-3">التاريخ</th>
+                      <th className="p-3">البيان / العنوان</th>
+                      <th className="p-3">الفئة</th>
+                      <th className="p-3">الملاحظات</th>
+                      <th className="p-3">المبلغ</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-100 dark:divide-surface-700">
+                    {expenses?.length === 0 ? (
+                      <tr>
+                        <td colSpan="5" className="p-8 text-center text-muted text-sm">
+                          لا توجد مصاريف مسجلة حتى الآن.
+                        </td>
+                      </tr>
+                    ) : (
+                      expenses?.map(e => (
+                        <tr key={e.id} className="hover:bg-surface-50/50">
+                          <td className="p-3 whitespace-nowrap">{formatDate(e.expense_date)}</td>
+                          <td className="p-3 font-semibold text-heading">{e.title}</td>
+                          <td className="p-3 text-muted">{EXPENSE_CATEGORIES[e.category] || e.category || 'أخرى'}</td>
+                          <td className="p-3 text-muted truncate max-w-[150px]">{e.notes || '-'}</td>
+                          <td className="p-3 font-bold text-danger-600">{formatCurrency(e.amount, symbol)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -785,6 +933,60 @@ export default function Reports() {
                     </tr>
                   )
                 })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* 4. Print Expenses */}
+        {activeTab === 'expenses' && (
+          <div className="space-y-6">
+            <h2 className="text-center text-lg font-bold py-2 bg-slate-100 rounded-lg">تقرير المصروفات العامة والتشغيلية الموحد</h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="border border-slate-200 p-4 rounded-lg">
+                <h3 className="font-bold text-xs mb-3 border-b pb-1">ملخص فئات المصروفات</h3>
+                <table className="w-full text-xs text-right">
+                  <tbody>
+                    {Object.entries(EXPENSE_CATEGORIES).map(([key, label]) => {
+                      const amt = categorySums[key] || 0
+                      const pct = totalGeneralExpenses > 0 ? (amt / totalGeneralExpenses) * 100 : 0
+                      return (
+                        <tr key={key} className="border-b last:border-0">
+                          <td className="py-1.5 text-slate-500">{label}</td>
+                          <td className="py-1.5 font-bold text-left">{formatCurrency(amt, symbol)} ({pct.toFixed(0)}%)</td>
+                        </tr>
+                      )
+                    })}
+                    <tr className="font-bold bg-slate-50 border-t">
+                      <td className="py-1.5">إجمالي المصروفات</td>
+                      <td className="py-1.5 text-left text-danger-700">{formatCurrency(totalGeneralExpenses, symbol)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <h3 className="font-bold text-xs mt-6">سجل حركات المصروفات العامة</h3>
+            <table className="w-full text-[10px] text-right border-collapse border border-slate-200">
+              <thead>
+                <tr className="bg-slate-100 border-b border-slate-300">
+                  <th className="p-2 border border-slate-200">التاريخ</th>
+                  <th className="p-2 border border-slate-200">العنوان</th>
+                  <th className="p-2 border border-slate-200">الفئة</th>
+                  <th className="p-2 border border-slate-200">الملاحظات</th>
+                  <th className="p-2 border border-slate-200">المبلغ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {expenses?.map(e => (
+                  <tr key={e.id} className="border-b border-slate-200">
+                    <td className="p-2 border border-slate-200">{formatDate(e.expense_date)}</td>
+                    <td className="p-2 border border-slate-200 font-bold">{e.title}</td>
+                    <td className="p-2 border border-slate-200">{EXPENSE_CATEGORIES[e.category] || e.category}</td>
+                    <td className="p-2 border border-slate-200">{e.notes || '-'}</td>
+                    <td className="p-2 border border-slate-200 font-bold text-danger-700">{formatCurrency(e.amount, symbol)}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
