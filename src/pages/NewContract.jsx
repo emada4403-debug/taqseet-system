@@ -5,7 +5,7 @@ import { useToast } from '@/context/ToastContext'
 import { formatCurrency, formatDate, generateInstallmentDates } from '@/lib/utils'
 import { ArrowRight, Calculator, Calendar, FileText, User, Store, Info } from 'lucide-react'
 
-const STEPS = ['نوع العقد', 'بيانات العقد', 'مراجعة وتأكيد']
+const STEPS = ['نوع الفاتورة', 'بيانات الفاتورة', 'مراجعة وتأكيد']
 
 export default function NewContract() {
   const navigate = useNavigate()
@@ -113,7 +113,7 @@ export default function NewContract() {
           <ArrowRight size={20} />
         </button>
         <div>
-          <h1 className="text-2xl font-bold text-heading">إنشاء عقد جديد</h1>
+          <h1 className="text-2xl font-bold text-heading">إنشاء فاتورة جديدة</h1>
           <p className="text-muted text-sm">الخطوة {step + 1} من {STEPS.length}</p>
         </div>
       </div>
@@ -135,7 +135,7 @@ export default function NewContract() {
       {/* STEP 0: Type & Party */}
       {step === 0 && (
         <div className="card p-6 space-y-5">
-          <h2 className="font-bold text-heading">نوع العقد</h2>
+          <h2 className="font-bold text-heading">نوع الفاتورة المعاملة</h2>
 
           <div className="grid grid-cols-2 gap-3">
             <button
@@ -147,8 +147,8 @@ export default function NewContract() {
               }`}
             >
               <div className="text-3xl mb-2">📥</div>
-              <div className="font-bold text-sm text-heading">مديونية</div>
-              <div className="text-xs text-muted mt-1">عميل يشتري منك بالتقسيط</div>
+              <div className="font-bold text-sm text-heading">فاتورة بيع (لعميل)</div>
+              <div className="text-xs text-muted mt-1">بيع أجهزة وتليفونات بالتقسيط أو نقداً</div>
             </button>
             <button
               onClick={() => setForm(f => ({ ...f, type: 'PAYABLE', client_id: '' }))}
@@ -159,8 +159,8 @@ export default function NewContract() {
               }`}
             >
               <div className="text-3xl mb-2">📤</div>
-              <div className="font-bold text-sm text-heading">مستحقة</div>
-              <div className="text-xs text-muted mt-1">أنت تشتري من مورد بالتقسيط</div>
+              <div className="font-bold text-sm text-heading">فاتورة شراء (من مورد)</div>
+              <div className="text-xs text-muted mt-1">شراء أجهزة وتليفونات بالتقسيط أو نقداً</div>
             </button>
           </div>
 

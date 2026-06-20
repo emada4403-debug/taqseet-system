@@ -126,7 +126,7 @@ export default function SupplierDetail() {
     ledgerEntries.push({
       date: contract.start_date,
       type: 'purchase',
-      description: `شراء بضاعة: ${contract.item_description}`,
+      description: `فاتورة شراء: ${contract.item_description}`,
       credit: parseFloat(contract.total_price || 0),
       debit: 0,
       original: contract
@@ -138,7 +138,7 @@ export default function SupplierDetail() {
       ledgerEntries.push({
         date: contract.start_date,
         type: 'down_payment',
-        description: `دفعة مقدمة لعقد: ${contract.item_description}`,
+        description: `دفعة مقدمة لفاتورة: ${contract.item_description}`,
         credit: 0,
         debit: dp,
         original: contract
@@ -151,7 +151,7 @@ export default function SupplierDetail() {
         ledgerEntries.push({
           date: pay.payment_date,
           type: 'payment',
-          description: `سداد قسط #${inst.installment_number} لعقد: ${contract.item_description}`,
+          description: `سداد قسط #${inst.installment_number} لفاتورة: ${contract.item_description}`,
           credit: 0,
           debit: parseFloat(pay.amount || 0),
           original: pay
@@ -236,7 +236,7 @@ export default function SupplierDetail() {
             className="btn-primary flex items-center gap-1.5"
           >
             <Plus size={16} />
-            <span>عقد شراء جديد</span>
+            <span>فاتورة شراء جديدة</span>
           </Link>
         </div>
       </div>
@@ -362,7 +362,7 @@ export default function SupplierDetail() {
             <table className="table text-right text-xs">
               <thead>
                 <tr className="bg-surface-50 dark:bg-surface-800">
-                  <th className="p-3">العقد / السلعة</th>
+                  <th className="p-3">الفاتورة / السلعة</th>
                   <th className="p-3">رقم القسط</th>
                   <th className="p-3">تاريخ الاستحقاق</th>
                   <th className="p-3">المبلغ المطلوب</th>
