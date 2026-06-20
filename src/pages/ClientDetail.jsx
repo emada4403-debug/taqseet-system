@@ -137,7 +137,7 @@ function ContractCard({ contract, symbol, onPay, onWhatsApp }) {
                       {inst.status !== 'paid' ? (
                         <div className="flex gap-1">
                           <button
-                            onClick={() => onPay(inst)}
+                            onClick={() => onPay({ ...inst, contracts: contract })}
                             className="btn-success btn-sm"
                           >
                             دفع

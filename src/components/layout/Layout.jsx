@@ -13,8 +13,6 @@ const NAV_ITEMS = [
   { to: '/', icon: LayoutDashboard, label: 'الرئيسية', exact: true },
   { to: '/receivables', icon: TrendingUp, label: 'المديونيات', badge: 'receivables' },
   { to: '/payables', icon: TrendingDown, label: 'المستحقات', badge: 'payables' },
-  { to: '/inventory', icon: Package, label: 'المخزن' },
-  { to: '/safe', icon: Wallet, label: 'الخزينة والمصروفات' },
   { to: '/contracts/new', icon: FileText, label: 'عقد جديد' },
   { to: '/calendar', icon: Calendar, label: 'التقويم' },
   { to: '/reports', icon: BarChart3, label: 'التقارير' },

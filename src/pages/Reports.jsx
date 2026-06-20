@@ -4,8 +4,6 @@ import {
   useSettings,
   useClients,
   useSuppliers,
-  useSafeTransactions,
-  useSafeSummary,
   useExpenses,
   useProducts,
   useContracts
@@ -56,7 +54,6 @@ export default function Reports() {
   const { data: suppliers, isLoading: isSuppliersLoading, error: suppliersErr } = useSuppliers()
   const { data: products, isLoading: isProductsLoading } = useProducts()
   const { data: allContracts, isLoading: isContractsLoading } = useContracts()
-  const { data: safeTransactions, isLoading: isSafeLoading } = useSafeTransactions()
   const { data: expenses, isLoading: isExpensesLoading } = useExpenses()
   
   // Specific hooks for legacy reports
@@ -71,7 +68,7 @@ export default function Reports() {
   const [safeDateFrom, setSafeDateFrom] = useState('')
   const [safeDateTo, setSafeDateTo] = useState('')
 
-  if (isClientsLoading || isSuppliersLoading || isProductsLoading || isContractsLoading || isSafeLoading || isExpensesLoading) {
+  if (isClientsLoading || isSuppliersLoading || isProductsLoading || isContractsLoading || isExpensesLoading) {
     return <PageLoader />
   }
 
@@ -90,12 +87,11 @@ export default function Reports() {
     const total = parseFloat(contract.total_price || 0)
     totalSales += total
     
-    // Find linked product purchase price
-    const linkedProduct = products?.find(p => p.id === contract.product_id)
-    const cost = linkedProduct ? parseFloat(linkedProduct.purchase_price || 0) : 0
+    // Use manual purchase price and profit from contract
+    const cost = parseFloat(contract.purchase_price || 0)
     totalCost += cost
 
-    const expectedProfit = total - cost
+    const expectedProfit = parseFloat(contract.profit || (total - cost))
     totalExpectedProfit += expectedProfit
 
     // Calculate paid amount
@@ -241,30 +237,6 @@ export default function Reports() {
     XLSX.writeFile(wb, 'suppliers_payables.xlsx')
   }
 
-  const handleExportSafeExcel = () => {
-    const rows = [
-      ['التاريخ', 'النوع', 'التصنيف', 'المبلغ', 'التفاصيل والبيان'],
-      ...filteredSafeTransactions.map(tx => [
-        tx.transaction_date,
-        tx.type === 'deposit' ? 'إيداع' : 'سحب',
-        tx.category,
-        parseFloat(tx.amount),
-        tx.notes || ''
-      ])
-    ]
-    const ws = XLSX.utils.aoa_to_sheet(rows)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'حركة الخزينة')
-    XLSX.writeFile(wb, 'safe_report.xlsx')
-  }
-
-  // Filtered Safe transactions
-  const filteredSafeTransactions = safeTransactions?.filter(tx => {
-    if (safeDateFrom && tx.transaction_date < safeDateFrom) return false
-    if (safeDateTo && tx.transaction_date > safeDateTo) return false
-    return true
-  }) || []
-
   const printReport = () => {
     window.print()
   }
@@ -291,7 +263,6 @@ export default function Reports() {
           { id: 'profits', label: 'تقرير الأرباح والخسائر', icon: BarChart3 },
           { id: 'client_receivables', label: 'مديونيات العملاء', icon: User },
           { id: 'supplier_payables', label: 'مديونيات الموردين', icon: Store },
-          { id: 'safe', label: 'حركة الخزينة', icon: Wallet },
           { id: 'aging', label: 'تقرير التأخير وأعمار الديون', icon: AlertTriangle }
         ].map(tab => (
           <button
@@ -564,71 +535,7 @@ export default function Reports() {
         </div>
       )}
 
-      {/* ========================================== */}
-      {/* 4. SAFE LEDGER REPORT TAB */}
-      {/* ========================================== */}
-      {activeTab === 'safe' && (
-        <div className="space-y-6 no-print">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-muted whitespace-nowrap">من تاريخ:</span>
-              <input
-                type="date"
-                className="input py-1 text-xs"
-                value={safeDateFrom}
-                onChange={e => setSafeDateFrom(e.target.value)}
-              />
-              <span className="text-xs text-muted whitespace-nowrap">إلى تاريخ:</span>
-              <input
-                type="date"
-                className="input py-1 text-xs"
-                value={safeDateTo}
-                onChange={e => setSafeDateTo(e.target.value)}
-              />
-            </div>
-            <button onClick={handleExportSafeExcel} className="btn-secondary btn-sm flex items-center gap-1">
-              <FileSpreadsheet size={14} />
-              <span>تصدير Excel</span>
-            </button>
-          </div>
 
-          <div className="card overflow-hidden">
-            <div className="p-4 border-b border-surface-200 dark:border-surface-700 bg-surface-50">
-              <h3 className="font-bold text-heading text-sm">حركات الخزينة خلال الفترة المحددة</h3>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="table text-right text-xs">
-                <thead>
-                  <tr className="bg-surface-50 dark:bg-surface-800">
-                    <th className="p-3">تاريخ الحركة</th>
-                    <th className="p-3">نوع الحركة</th>
-                    <th className="p-3">المبلغ</th>
-                    <th className="p-3">التفاصيل / البيان</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-surface-100 dark:divide-surface-700">
-                  {filteredSafeTransactions.map(tx => (
-                    <tr key={tx.id} className="hover:bg-surface-50/50">
-                      <td className="p-3">{formatDate(tx.transaction_date)}</td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                          tx.type === 'deposit' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-                        }`}>
-                          {tx.type === 'deposit' ? 'وارد / إيداع' : 'منصرف / سحب'}
-                        </span>
-                      </td>
-                      <td className={`p-3 font-bold ${tx.type === 'deposit' ? 'text-green-600' : 'text-danger-600'}`}>
-                        {tx.type === 'deposit' ? '+' : '-'}{formatCurrency(tx.amount, symbol)}
-                      </td>
-                      <td className="p-3 text-muted">{tx.notes}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ========================================== */}
       {/* 5. AGING (LATE DEBTS) TAB */}
@@ -694,7 +601,6 @@ export default function Reports() {
               profits: 'تقرير الأرباح والخسائر وتحليل العقود',
               client_receivables: 'كشف مديونية وتفاصيل العميل',
               supplier_payables: 'تقرير مستحقات الديون للموردين',
-              safe: 'تقرير حركة الخزينة وتدقيق الصندوق',
               aging: 'تقرير أعمار الديون والأقساط المتأخرة'
             }[activeTab]}</p>
           </div>
@@ -884,41 +790,7 @@ export default function Reports() {
           </div>
         )}
 
-        {/* 4. Print Safe Ledger */}
-        {activeTab === 'safe' && (
-          <div className="space-y-6">
-            <h2 className="text-center text-lg font-bold py-2 bg-slate-100 rounded-lg">تقرير حركة الخزينة وتدقيق الصندوق</h2>
-            <div className="flex justify-between text-xs font-semibold">
-              <span>الفترة من: {safeDateFrom || 'البداية'}</span>
-              <span>إلى تاريخ: {safeDateTo || 'اليوم'}</span>
-            </div>
 
-            <table className="w-full text-xs text-right border-collapse border border-slate-200">
-              <thead>
-                <tr className="bg-slate-100 border-b border-slate-300">
-                  <th className="p-2 border border-slate-200">التاريخ</th>
-                  <th className="p-2 border border-slate-200">النوع</th>
-                  <th className="p-2 border border-slate-200">المبلغ</th>
-                  <th className="p-2 border border-slate-200">البيان والملاحظات</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredSafeTransactions.map(tx => (
-                  <tr key={tx.id} className="border-b border-slate-200">
-                    <td className="p-2 border border-slate-200">{formatDate(tx.transaction_date)}</td>
-                    <td className="p-2 border border-slate-200 font-semibold">
-                      {tx.type === 'deposit' ? 'وارد / إيداع' : 'منصرف / سحب'}
-                    </td>
-                    <td className={`p-2 border border-slate-200 font-bold ${tx.type === 'deposit' ? 'text-green-700' : 'text-red-700'}`}>
-                      {tx.type === 'deposit' ? '+' : '-'}{formatCurrency(tx.amount, symbol)}
-                    </td>
-                    <td className="p-2 border border-slate-200">{tx.notes}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
 
         {/* 5. Print Aging */}
         {activeTab === 'aging' && (

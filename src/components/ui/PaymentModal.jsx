@@ -31,7 +31,15 @@ export default function PaymentModal({ installment, isOpen, onClose, currencySym
 
   if (!installment) return null
 
-  const maxAmount = parseFloat(installment.remaining_amount || installment.amount)
+  const installmentRemaining = parseFloat(installment.remaining_amount || installment.amount)
+  
+  // Calculate total remaining contract balance if installments siblings are available
+  const siblings = installment.contracts?.installments
+  const maxContractBalance = siblings 
+    ? siblings.filter(i => i.status !== 'paid').reduce((sum, i) => sum + parseFloat(i.remaining_amount || 0), 0)
+    : null
+  
+  const maxPayable = maxContractBalance || 999999999 // fallback if siblings not loaded
 
   const handleClose = () => {
     setIsSuccess(false)
@@ -48,8 +56,8 @@ export default function PaymentModal({ installment, isOpen, onClose, currencySym
       toast.error('يرجى إدخال مبلغ صحيح')
       return
     }
-    if (amount > maxAmount) {
-      toast.error(`المبلغ لا يمكن أن يتجاوز ${formatCurrency(maxAmount, currencySymbol)}`)
+    if (amount > maxPayable) {
+      toast.error(`المبلغ لا يمكن أن يتجاوز إجمالي المتبقي في العقد وهو ${formatCurrency(maxPayable, currencySymbol)}`)
       return
     }
 
@@ -163,11 +171,19 @@ export default function PaymentModal({ installment, isOpen, onClose, currencySym
           <span className="font-medium text-sm">{formatDate(installment.due_date)}</span>
         </div>
         <div className="flex items-center justify-between border-t border-surface-200 dark:border-surface-600 pt-2 mt-2">
-          <span className="text-muted text-xs font-semibold">المبلغ المتبقي</span>
+          <span className="text-muted text-xs font-semibold">المبلغ المتبقي للقسط</span>
           <span className="font-bold text-danger-600 dark:text-danger-400">
-            {formatCurrency(maxAmount, currencySymbol)}
+            {formatCurrency(installmentRemaining, currencySymbol)}
           </span>
         </div>
+        {maxContractBalance && maxContractBalance > installmentRemaining && (
+          <div className="flex items-center justify-between border-t border-dashed border-surface-200 dark:border-surface-600 pt-1.5 mt-1">
+            <span className="text-muted text-xs">متبقي كامل العقد</span>
+            <span className="font-bold text-slate-600 dark:text-slate-400 text-xs">
+              {formatCurrency(maxContractBalance, currencySymbol)}
+            </span>
+          </div>
+        )}
       </div>
 
       <form id="payment-form" onSubmit={handleSubmit} className="space-y-4">
@@ -182,7 +198,7 @@ export default function PaymentModal({ installment, isOpen, onClose, currencySym
               type="number"
               step="0.01"
               min="0.01"
-              max={maxAmount}
+              max={maxPayable}
               className="input pl-16"
               placeholder="0.00"
               value={form.amount}
@@ -198,21 +214,28 @@ export default function PaymentModal({ installment, isOpen, onClose, currencySym
               تأكيد المبلغ: {formatCurrency(parseFloat(form.amount), currencySymbol)}
             </p>
           )}
+          {form.amount && parseFloat(form.amount) > installmentRemaining && (
+            <p className="text-[11px] font-bold text-amber-600 mt-1 leading-relaxed">
+              ⚠️ سيتم سداد القسط الحالي بالكامل، وتوزيع بقية المبلغ ({formatCurrency(parseFloat(form.amount) - installmentRemaining, currencySymbol)}) على الأقساط التالية تلقائياً.
+            </p>
+          )}
           <div className="flex gap-2 mt-1.5">
             <button
               type="button"
               className="btn-secondary btn-sm"
-              onClick={() => setForm(f => ({ ...f, amount: maxAmount.toString() }))}
+              onClick={() => setForm(f => ({ ...f, amount: installmentRemaining.toString() }))}
             >
-              الكل ({formatCurrency(maxAmount, currencySymbol)})
+              قيمة القسط ({formatCurrency(installmentRemaining, currencySymbol)})
             </button>
-            <button
-              type="button"
-              className="btn-secondary btn-sm"
-              onClick={() => setForm(f => ({ ...f, amount: (maxAmount / 2).toFixed(2) }))}
-            >
-              النصف
-            </button>
+            {maxContractBalance && maxContractBalance > installmentRemaining && (
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                onClick={() => setForm(f => ({ ...f, amount: maxContractBalance.toString() }))}
+              >
+                كامل العقد ({formatCurrency(maxContractBalance, currencySymbol)})
+              </button>
+            )}
           </div>
         </div>
 

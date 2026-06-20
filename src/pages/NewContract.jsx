@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useClients, useSuppliers, useCreateContract, useSettings, useProducts } from '@/hooks/useApi'
+import { useClients, useSuppliers, useCreateContract, useSettings } from '@/hooks/useApi'
 import { useToast } from '@/context/ToastContext'
 import { formatCurrency, formatDate, generateInstallmentDates } from '@/lib/utils'
-import { ArrowRight, Calculator, Calendar, FileText, User, Store, Info, Package } from 'lucide-react'
+import { ArrowRight, Calculator, Calendar, FileText, User, Store, Info } from 'lucide-react'
 
 const STEPS = ['نوع العقد', 'بيانات العقد', 'مراجعة وتأكيد']
 
@@ -13,17 +13,15 @@ export default function NewContract() {
   const { data: clients } = useClients()
   const { data: suppliers } = useSuppliers()
   const { data: settings } = useSettings()
-  const { data: products } = useProducts()
   const createContract = useCreateContract()
   const toast = useToast()
-
   const [step, setStep] = useState(0)
   const [form, setForm] = useState({
     type: searchParams.get('type') || 'RECEIVABLE',
     client_id: searchParams.get('client') || '',
     supplier_id: searchParams.get('supplier') || '',
-    product_id: '',
     item_description: '',
+    purchase_price: '',
     total_price: '',
     down_payment: '0',
     installment_count: '12',
@@ -31,24 +29,6 @@ export default function NewContract() {
     start_date: new Date().toISOString().split('T')[0],
     notes: '',
   })
-
-  const handleProductChange = (e) => {
-    const prodId = e.target.value
-    if (!prodId) {
-      setForm(f => ({ ...f, product_id: '', item_description: '', total_price: '' }))
-      return
-    }
-
-    const selected = products?.find(p => p.id === prodId)
-    if (selected) {
-      setForm(f => ({
-        ...f,
-        product_id: prodId,
-        item_description: selected.name,
-        total_price: f.type === 'RECEIVABLE' ? '' : selected.purchase_price.toString()
-      }))
-    }
-  }
 
   const symbol = settings?.currency_symbol || 'ج.م'
 
@@ -73,6 +53,7 @@ export default function NewContract() {
     }
     if (step === 1) {
       if (!form.item_description) { toast.error('يرجى إدخال وصف البضاعة'); return false }
+      if (isReceivable && (!form.purchase_price || parseFloat(form.purchase_price) <= 0)) { toast.error('يرجى إدخال سعر الشراء'); return false }
       if (!totalPrice || totalPrice <= 0) { toast.error('يرجى إدخال السعر الإجمالي'); return false }
       if (downPayment >= totalPrice) { toast.error('المقدم يجب أن يكون أقل من الإجمالي'); return false }
     }
@@ -85,13 +66,17 @@ export default function NewContract() {
 
   const handleSubmit = async () => {
     try {
+      const purchasePrice = isReceivable ? (parseFloat(form.purchase_price) || 0) : totalPrice
+      const profit = isReceivable ? (totalPrice - purchasePrice) : 0
+
       const contractData = {
         type: form.type,
         client_id: isReceivable ? form.client_id || null : null,
         supplier_id: !isReceivable ? form.supplier_id || null : null,
-        product_id: form.product_id || null,
         item_description: form.item_description,
+        purchase_price: purchasePrice,
         total_price: totalPrice,
+        profit: profit,
         down_payment: downPayment,
         installment_count: installmentCount,
         installment_amount: installmentAmount,
@@ -228,55 +213,69 @@ export default function NewContract() {
           <h2 className="font-bold text-heading">بيانات العقد</h2>
 
           <div className="form-group">
-            <label className="label"><Package size={14} className="inline ml-1" />اختر سلعة من المخزن (اختياري)</label>
-            <select
-              className="input"
-              value={form.product_id}
-              onChange={handleProductChange}
-            >
-              <option value="">-- سلعة غير مسجلة بالمخزن (إدخال يدوي) --</option>
-              {products?.map(p => (
-                <option key={p.id} value={p.id}>
-                  {p.name} (المتوفر: {p.stock} وحدة)
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="form-group">
             <label className="label"><FileText size={14} className="inline ml-1" />وصف البضاعة / الخدمة *</label>
             <input className="input" placeholder="مثال: تلفزيون سامسونج..." value={form.item_description}
               onChange={e => setForm(f => ({ ...f, item_description: e.target.value }))} required />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="form-group">
-              <label className="label">السعر الإجمالي *</label>
-              <div className="relative">
-                <input type="number" className="input pl-14" placeholder="0"
-                  value={form.total_price} onChange={e => setForm(f => ({ ...f, total_price: e.target.value }))} required />
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
+          {isReceivable ? (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="form-group">
+                  <label className="label">سعر الشراء *</label>
+                  <div className="relative">
+                    <input type="number" className="input pl-14" placeholder="0"
+                      value={form.purchase_price} onChange={e => setForm(f => ({ ...f, purchase_price: e.target.value }))} required />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="label">سعر البيع *</label>
+                  <div className="relative">
+                    <input type="number" className="input pl-14" placeholder="0"
+                      value={form.total_price} onChange={e => setForm(f => ({ ...f, total_price: e.target.value }))} required />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
+                  </div>
+                </div>
               </div>
-              {form.total_price && parseFloat(form.total_price) > 0 && (
-                <p className="text-[11px] font-bold text-success-600 mt-1">
-                  تأكيد السعر: {formatCurrency(parseFloat(form.total_price), symbol)}
-                </p>
+
+              {/* Profit preview if both entered */}
+              {parseFloat(form.total_price) > 0 && parseFloat(form.purchase_price) > 0 && (
+                <div className="bg-success-50 dark:bg-success-950/20 text-success-800 dark:text-success-300 rounded-xl p-3 text-xs flex justify-between font-bold">
+                  <span>الربح المحتسب:</span>
+                  <span>{formatCurrency(parseFloat(form.total_price) - parseFloat(form.purchase_price), symbol)}</span>
+                </div>
               )}
-            </div>
-            <div className="form-group">
-              <label className="label">المقدم / الدفعة الأولى</label>
-              <div className="relative">
-                <input type="number" className="input pl-14" placeholder="0"
-                  value={form.down_payment} onChange={e => setForm(f => ({ ...f, down_payment: e.target.value }))} />
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
+              
+              <div className="form-group">
+                <label className="label">المقدم / الدفعة الأولى</label>
+                <div className="relative">
+                  <input type="number" className="input pl-14" placeholder="0"
+                    value={form.down_payment} onChange={e => setForm(f => ({ ...f, down_payment: e.target.value }))} />
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
+                </div>
               </div>
-              {form.down_payment && parseFloat(form.down_payment) > 0 && (
-                <p className="text-[11px] font-bold text-success-600 mt-1">
-                  تأكيد المقدم: {formatCurrency(parseFloat(form.down_payment), symbol)}
-                </p>
-              )}
+            </>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="form-group">
+                <label className="label">سعر الشراء *</label>
+                <div className="relative">
+                  <input type="number" className="input pl-14" placeholder="0"
+                    value={form.total_price} onChange={e => setForm(f => ({ ...f, total_price: e.target.value }))} required />
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="label">المقدم / الدفعة الأولى</label>
+                <div className="relative">
+                  <input type="number" className="input pl-14" placeholder="0"
+                    value={form.down_payment} onChange={e => setForm(f => ({ ...f, down_payment: e.target.value }))} />
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">{symbol}</span>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="form-group">

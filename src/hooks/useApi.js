@@ -4,28 +4,8 @@ import { isLate } from '@/lib/utils'
 import { parseISO } from 'date-fns'
 
 const checkSafeBalance = async (requiredAmount) => {
-  const { data: safeTxs, error } = await supabase
-    .from('safe_transactions')
-    .select('type, amount')
-
-  if (error) throw error
-
-  let totalDeposits = 0
-  let totalWithdrawals = 0
-
-  safeTxs?.forEach(t => {
-    const amt = parseFloat(t.amount || 0)
-    if (t.type === 'deposit') {
-      totalDeposits += amt
-    } else if (t.type === 'withdrawal') {
-      totalWithdrawals += amt
-    }
-  })
-
-  const currentBalance = totalDeposits - totalWithdrawals
-  if (currentBalance < requiredAmount) {
-    throw new Error(`رصيد الخزينة الحالي غير كافٍ! الرصيد المتوفر: ${currentBalance} ج.م والمطلوب سحبه: ${requiredAmount} ج.م. يرجى شحن الخزينة أولاً.`);
-  }
+  // Safe is disabled by user request. Always allow transaction.
+  return true
 }
 
 
@@ -365,12 +345,7 @@ export const useCreateContract = () => {
     mutationFn: async ({ contractData, installments }) => {
       const { data: { user } } = await supabase.auth.getUser()
 
-      // Enforce safe balance check for supplier (PAYABLE) contract down payments
-      if (contractData.type === 'PAYABLE' && parseFloat(contractData.down_payment || 0) > 0) {
-        await checkSafeBalance(parseFloat(contractData.down_payment))
-      }
-
-      // Insert contract
+      // Insert contract (including manual purchase_price and profit)
       const { data: contract, error: contractError } = await supabase
         .from('contracts')
         .insert({ ...contractData, user_id: user.id })
@@ -378,41 +353,6 @@ export const useCreateContract = () => {
         .single()
 
       if (contractError) throw contractError
-
-      // Record down payment in safe if > 0
-      if (parseFloat(contract.down_payment || 0) > 0) {
-        const isReceivable = contract.type === 'RECEIVABLE'
-        const { error: safeError } = await supabase
-          .from('safe_transactions')
-          .insert({
-            user_id: user.id,
-            type: isReceivable ? 'deposit' : 'withdrawal',
-            amount: parseFloat(contract.down_payment),
-            category: 'contract_downpayment',
-            contract_id: contract.id,
-            transaction_date: contract.start_date,
-            notes: `مقدم عقد: ${contract.item_description}`,
-          })
-        if (safeError) throw safeError
-      }
-
-      // If a product is linked, update its stock
-      if (contractData.product_id) {
-        const { data: product } = await supabase
-          .from('products')
-          .select('stock')
-          .eq('id', contractData.product_id)
-          .single()
-
-        if (product) {
-          const change = contractData.type === 'RECEIVABLE' ? -1 : 1
-          const newStock = Math.max(0, (product.stock || 0) + change)
-          await supabase
-            .from('products')
-            .update({ stock: newStock })
-            .eq('id', contractData.product_id)
-        }
-      }
 
       // Insert all installments
       const installmentRecords = installments.map((inst, idx) => ({
@@ -521,26 +461,35 @@ export const useRecordPayment = () => {
       if (fetchError) throw fetchError
 
       const payAmount = parseFloat(amount)
-
-      // Enforce safe balance check if paying a supplier (PAYABLE)
-      const isReceivable = installment.contracts?.type === 'RECEIVABLE'
-      if (!isReceivable) {
-        await checkSafeBalance(payAmount)
-      }
-
-      const remaining = parseFloat(installment.remaining_amount)
-      const newRemaining = Math.max(0, remaining - payAmount)
-      const isPaid = newRemaining === 0
+      let extraAmount = payAmount
       const date = paymentDate || new Date().toISOString().split('T')[0]
 
-      // Insert payment record
+      // 1. Process current installment
+      const currentRemaining = parseFloat(installment.remaining_amount)
+      const amountToApplyCurrent = Math.min(extraAmount, currentRemaining)
+      const newRemainingCurrent = Math.max(0, currentRemaining - amountToApplyCurrent)
+      const isPaidCurrent = newRemainingCurrent === 0
+      
+      // Update current installment
+      const { error: updateCurrentError } = await supabase
+        .from('installments')
+        .update({
+          remaining_amount: newRemainingCurrent,
+          status: isPaidCurrent ? 'paid' : 'partial',
+          payment_date: isPaidCurrent ? date : installment.payment_date,
+          payment_method: isPaidCurrent ? method : installment.payment_method,
+        })
+        .eq('id', installmentId)
+      if (updateCurrentError) throw updateCurrentError
+
+      // Insert payment record for current installment
       const { data: paymentRecord, error: payError } = await supabase
         .from('payments')
         .insert({
           user_id: user.id,
           installment_id: installmentId,
           contract_id: installment.contract_id,
-          amount: payAmount,
+          amount: amountToApplyCurrent,
           payment_date: date,
           method: method || 'cash',
           reference_number: referenceNumber || null,
@@ -548,56 +497,76 @@ export const useRecordPayment = () => {
         })
         .select()
         .single()
-
       if (payError) throw payError
-      
-      // Record in safe_transactions
-      const { error: safeError } = await supabase
-        .from('safe_transactions')
-        .insert({
-          user_id: user.id,
-          type: isReceivable ? 'deposit' : 'withdrawal',
-          amount: payAmount,
-          category: isReceivable ? 'payment_received' : 'supplier_paid',
-          payment_id: paymentRecord.id,
-          transaction_date: date,
-          notes: `سداد قسط عقد: ${installment.contracts?.item_description || ''}`,
-        })
-      if (safeError) throw safeError
 
-      // Update installment
-      const { error: updateError } = await supabase
-        .from('installments')
-        .update({
-          remaining_amount: newRemaining,
-          status: isPaid ? 'paid' : 'partial',
-          payment_date: isPaid ? date : installment.payment_date,
-          payment_method: isPaid ? method : installment.payment_method,
-        })
-        .eq('id', installmentId)
+      extraAmount -= amountToApplyCurrent
 
-      if (updateError) throw updateError
-
-      // Check if all installments of the contract are paid
-      if (isPaid) {
-        const { data: contractInstallments } = await supabase
+      // 2. Process subsequent installments if there's leftover cash
+      if (extraAmount > 0) {
+        // Fetch subsequent unpaid installments for this contract
+        const { data: nextInstallments, error: fetchNextError } = await supabase
           .from('installments')
-          .select('id, status, remaining_amount')
+          .select('*')
           .eq('contract_id', installment.contract_id)
+          .neq('id', installmentId)
+          .neq('status', 'paid')
+          .order('installment_number', { ascending: true })
 
-        const allPaid = contractInstallments.every(i =>
-          i.id === installmentId ? true : i.status === 'paid'
-        )
+        if (fetchNextError) throw fetchNextError
 
-        if (allPaid) {
-          await supabase
-            .from('contracts')
-            .update({ status: 'completed' })
-            .eq('id', installment.contract_id)
+        for (const inst of nextInstallments) {
+          if (extraAmount <= 0) break
+
+          const instRemaining = parseFloat(inst.remaining_amount)
+          const amountToApply = Math.min(extraAmount, instRemaining)
+          const newRemaining = Math.max(0, instRemaining - amountToApply)
+          const isPaid = newRemaining === 0
+
+          // Update this installment
+          const { error: updateNextError } = await supabase
+            .from('installments')
+            .update({
+              remaining_amount: newRemaining,
+              status: isPaid ? 'paid' : 'partial',
+              payment_date: isPaid ? date : inst.payment_date,
+              payment_method: isPaid ? method : inst.payment_method,
+            })
+            .eq('id', inst.id)
+          if (updateNextError) throw updateNextError
+
+          // Record payment for this installment
+          const { error: payNextError } = await supabase
+            .from('payments')
+            .insert({
+              user_id: user.id,
+              installment_id: inst.id,
+              contract_id: installment.contract_id,
+              amount: amountToApply,
+              payment_date: date,
+              method: method || 'cash',
+              reference_number: referenceNumber || null,
+              notes: notes ? `دفع مقدم فائض: ${notes}` : 'دفع مقدم فائض',
+            })
+          if (payNextError) throw payNextError
+
+          extraAmount -= amountToApply
         }
       }
 
-      return { success: true, isPaid, newRemaining }
+      // Check if all installments of the contract are now paid
+      const { data: allContractInstallments, error: fetchAllError } = await supabase
+        .from('installments')
+        .select('status')
+        .eq('contract_id', installment.contract_id)
+
+      if (!fetchAllError && allContractInstallments.every(i => i.status === 'paid')) {
+        await supabase
+          .from('contracts')
+          .update({ status: 'completed' })
+          .eq('id', installment.contract_id)
+      }
+
+      return { success: true, isPaid: isPaidCurrent, newRemaining: newRemainingCurrent }
     },
     onSuccess: () => {
       queryClient.invalidateQueries()

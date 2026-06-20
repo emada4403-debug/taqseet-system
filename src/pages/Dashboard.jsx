@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useDashboard, useSettings, useSafeSummary } from '@/hooks/useApi'
+import { useDashboard, useSettings } from '@/hooks/useApi'
 import { formatCurrency, formatDate, getInstallmentStatusClass, getInstallmentStatusLabel } from '@/lib/utils'
 import { PageLoader, ErrorState } from '@/components/ui/States'
 import PaymentModal from '@/components/ui/PaymentModal'
@@ -69,26 +69,23 @@ function InstallmentItem({ installment, onPay, symbol }) {
 
 export default function Dashboard() {
   const { data, isLoading, error, refetch } = useDashboard()
-  const { data: safeSummary, isLoading: isSafeLoading, refetch: refetchSafe } = useSafeSummary()
   const { data: settings } = useSettings()
   const [selectedInstallment, setSelectedInstallment] = useState(null)
   const symbol = settings?.currency_symbol || 'ج.م'
 
-  if (isLoading || isSafeLoading) return <PageLoader />
+  if (isLoading) return <PageLoader />
   
   const handleRetry = () => {
     refetch()
-    refetchSafe()
   }
 
   if (error) return <ErrorState error={error} onRetry={handleRetry} />
 
   const {
-    totalReceivables, totalPayables,
+    totalReceivables, totalPayables, netCash,
     todayInstallments, weekInstallments, lateCount, allInstallments
   } = data
 
-  const safeBalance = safeSummary?.balance || 0
   const lateInstallments = allInstallments?.filter(i => i.status === 'late') || []
 
   return (
@@ -135,11 +132,11 @@ export default function Dashboard() {
           sub="للموردين"
         />
         <StatCard
-          label="رصيد الخزينة"
-          value={formatCurrency(safeBalance, symbol)}
+          label="صافي المحفظة"
+          value={formatCurrency(netCash, symbol)}
           icon={Wallet}
-          color={safeBalance >= 0 ? "border-primary-500 text-primary-600" : "border-danger-500 text-danger-600"}
-          sub="السيولة النقدية المتوفرة"
+          color={netCash >= 0 ? "border-primary-500 text-primary-600" : "border-danger-500 text-danger-600"}
+          sub="المديونيات ناقص المستحقات"
         />
         <StatCard
           label="أقساط متأخرة"
